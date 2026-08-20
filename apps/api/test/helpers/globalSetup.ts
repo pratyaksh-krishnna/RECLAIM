@@ -10,6 +10,7 @@ export default async function setup(): Promise<void> {
 
   const test = postgres('postgres://reclaim:reclaim@localhost:5433/reclaim_test', { max: 1 });
   await test.unsafe('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
+  await test.unsafe('DROP SCHEMA IF EXISTS drizzle CASCADE;'); // migration journal lives here
   const db = drizzle(test);
   await migrate(db, { migrationsFolder: new URL('../../drizzle', import.meta.url).pathname });
   await test.end();
