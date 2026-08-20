@@ -256,7 +256,7 @@ function MessageBody({ body, outbound }: { body: string; outbound: boolean }) {
 }
 
 function Timeline({ data }: { data: CaseDetail }) {
-  type Item = { at: string; kind: string; title: string; detail?: string; tone?: 'red' | 'green' | 'amber' };
+  type Item = { at: string; kind: string; title: string; detail?: string | undefined; tone?: 'red' | 'green' | 'amber' | undefined };
   const items: Item[] = [
     ...data.audit.map((a) => ({
       at: a.createdAt,
