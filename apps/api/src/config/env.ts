@@ -25,6 +25,8 @@ const EnvSchema = z.object({
   PAYMENTS_MODE: z.enum(['sandbox', 'live-test']).default('sandbox'),
 
   MAILER_MODE: z.enum(['mock']).default('mock'),
+  /** comma-separated origin allowlist for the browser app */
+  CORS_ALLOWED_ORIGINS: z.string().default('http://localhost:5173'),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

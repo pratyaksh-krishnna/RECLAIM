@@ -2,6 +2,11 @@ import express, { type Express, type NextFunction, type Request, type Response }
 import type { Db } from './db/client.js';
 import { makeInboundEmailRouter, makeWebhookRouter } from './ingest/webhookRouter.js';
 import { makeApiRouter, type ApiDeps } from './api/routes.js';
+import { env } from './config/env.js';
+
+const corsAllowlist = new Set(
+  env.CORS_ALLOWED_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean),
+);
 
 export interface AppDeps {
   db: Db;
@@ -16,11 +21,15 @@ export function buildApp(deps: AppDeps): Express {
   // NOTE: webhook router mounts BEFORE any json body parser — raw body required for HMAC
   app.use(makeWebhookRouter({ db: deps.db, webhookSecret: deps.webhookSecret, enqueueNormalize: deps.enqueueNormalize }));
   app.use(makeInboundEmailRouter({ db: deps.db }));
-  // dev CORS for the Vite frontend
+  // CORS: explicit allowlist only — never reflect arbitrary origins
   app.use((req: Request, res: Response, next: NextFunction) => {
-    res.header('Access-Control-Allow-Origin', req.header('origin') ?? '*');
-    res.header('Access-Control-Allow-Headers', 'authorization, content-type');
-    res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    const origin = req.header('origin');
+    if (origin && corsAllowlist.has(origin)) {
+      res.header('Access-Control-Allow-Origin', origin);
+      res.header('Vary', 'Origin');
+      res.header('Access-Control-Allow-Headers', 'authorization, content-type');
+      res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    }
     if (req.method === 'OPTIONS') {
       res.sendStatus(204);
       return;
