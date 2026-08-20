@@ -1,0 +1,27 @@
+{
+  "name": "reclaim",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.15.4",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --parallel -r dev",
+    "test": "pnpm -r test",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @reclaim/api db:generate",
+    "db:migrate": "pnpm --filter @reclaim/api db:migrate",
+    "seed": "pnpm --filter @reclaim/api seed",
+    "replay": "pnpm --filter @reclaim/api replay"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.18.0",
+    "eslint": "^9.18.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.20.0"
+  }
+}
