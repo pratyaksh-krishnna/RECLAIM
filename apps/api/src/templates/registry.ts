@@ -16,9 +16,6 @@ export function formatDateIST(date: Date): string {
   return new Intl.DateTimeFormat('en-IN', { dateStyle: 'long', timeZone: 'Asia/Kolkata' }).format(date);
 }
 
-const LEGAL_FOOTER =
-  'This is a payment notice regarding your account. Reply STOP to opt out of payment communications.';
-
 const commonFreeSlots = [
   { name: 'greeting', kind: 'free' as const, maxLength: 120, description: 'personal greeting, no numbers/links/amounts' },
   { name: 'context_sentence', kind: 'free' as const, maxLength: 300, description: 'one empathetic context sentence, no numbers/links/amounts' },

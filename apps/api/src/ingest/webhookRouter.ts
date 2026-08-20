@@ -92,7 +92,7 @@ export function makeInboundEmailRouter(deps: { db: Db }): Router {
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
-    const { customerEmail, body, inReplyToCommunicationId } = parsed.data;
+    const { customerEmail, body } = parsed.data;
 
     const outcome = await deps.db.transaction(async (tx) => {
       const [customer] = await tx

@@ -36,6 +36,7 @@ const CURRENCY_RE = /\p{Sc}|(\bINR\b)|(\bRs\.?)|(\brupees?\b)/iu;
 const HTML_RE = /[<>]/;
 // Invisible/zero-width characters that could be used to split tokens past the
 // lint while an email client still renders them joined (parser differential).
+// eslint-disable-next-line no-misleading-character-class -- intentional: we strip LONE combining/invisible code points
 const INVISIBLE_RE = /[\u200B-\u200F\u2060\u2061-\u2064\uFEFF\u00AD\u034F\u180E]/gu;
 
 /**
