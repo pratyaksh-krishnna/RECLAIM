@@ -16,6 +16,8 @@ export interface NormalizeJob {
 }
 export interface OrchestrateJob {
   outboxId: string;
+  eventType: string;
+  payload: unknown;
 }
 /** Case-step job: orchestrator advancing a case through its FSM. */
 export interface CaseStepJob {
