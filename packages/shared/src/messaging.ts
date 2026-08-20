@@ -29,16 +29,30 @@ export type TemplateSkeleton = z.infer<typeof TemplateSkeleton>;
  * URL-ish token, currency symbol, or HTML in agent-filled free slots so no
  * amount, date, or link can ever originate from an LLM.
  */
-const NUMERAL_RE = /[0-9०-९]/; // ASCII + Devanagari digits
+// All Unicode decimal digits, letter-numbers, and other numerics (०-९, ٠-٩, ①, Ⅷ, …)
+const NUMERAL_RE = /[\p{Nd}\p{Nl}\p{No}]/u;
 const URL_RE = /(https?:\/\/|www\.|\.com|\.in\b|\.org|\.net|:\/\/)/i;
-const CURRENCY_RE = /[₹$€£¥]|(\bINR\b)|(\bRs\.?)|(\brupees?\b)/i;
+const CURRENCY_RE = /\p{Sc}|(\bINR\b)|(\bRs\.?)|(\brupees?\b)/iu;
 const HTML_RE = /[<>]/;
+// Invisible/zero-width characters that could be used to split tokens past the
+// lint while an email client still renders them joined (parser differential).
+const INVISIBLE_RE = /[\u200B-\u200F\u2060\u2061-\u2064\uFEFF\u00AD\u034F\u180E]/gu;
+
+/**
+ * Canonicalize before linting: NFKC folds full-width/stylized digits and
+ * letters to ASCII forms; stripping invisibles rejoins split tokens. The lint
+ * MUST see the text the way a mail client's renderer will.
+ */
+export function canonicalizeForLint(text: string): string {
+  return text.normalize('NFKC').replace(INVISIBLE_RE, '');
+}
 
 export type LintViolation = { slot: string; rule: 'numeral' | 'url' | 'currency' | 'html'; match: string };
 
 export function lintFreeSlotFills(fills: Record<string, string>): LintViolation[] {
   const violations: LintViolation[] = [];
-  for (const [slot, text] of Object.entries(fills)) {
+  for (const [slot, raw] of Object.entries(fills)) {
+    const text = canonicalizeForLint(raw);
     const checks: Array<[LintViolation['rule'], RegExp]> = [
       ['numeral', NUMERAL_RE],
       ['url', URL_RE],

@@ -29,3 +29,21 @@ describe('lintFreeSlotFills', () => {
     expect(lintFreeSlotFills({ ctx: '<a href=x>click</a>' }).some((v) => v.rule === 'html')).toBe(true);
   });
 });
+
+describe('lint parser-differential hardening', () => {
+  it('rejects full-width and circled digits via NFKC', () => {
+    for (const s of ['pay ５００ now', 'send ① rupee-free note ②']) {
+      expect(lintFreeSlotFills({ ctx: s }).some((v) => v.rule === 'numeral')).toBe(true);
+    }
+  });
+  it('rejects Arabic-Indic digits', () => {
+    expect(lintFreeSlotFills({ ctx: 'ادفع ٥٠٠' }).some((v) => v.rule === 'numeral')).toBe(true);
+  });
+  it('rejects zero-width-split URLs', () => {
+    const s = 'visit w​w​w​.evil-site of mine';
+    expect(lintFreeSlotFills({ ctx: s }).some((v) => v.rule === 'url')).toBe(true);
+  });
+  it('rejects any unicode currency symbol', () => {
+    expect(lintFreeSlotFills({ ctx: 'pay ￥ soon' }).some((v) => v.rule === 'currency')).toBe(true);
+  });
+});
