@@ -11,8 +11,8 @@ import type {
  * Razorpay test-mode adapter.
  *
  * Idempotency note (verified against Razorpay docs as of 2026): the Payment
- * Links API does not accept a client idempotency key header the way Stripe
- * does, so provider-side idempotency cannot be relied on. The system-level
+ * Links API does not accept a client idempotency key header, so provider-side
+ * idempotency cannot be relied on. The system-level
  * guarantee is internal: the unique tool_executions.idempotency_key claim
  * means a duplicate BullMQ job never reaches this adapter twice for the same
  * attempt. reference_id also lets us detect existing links for an invoice.

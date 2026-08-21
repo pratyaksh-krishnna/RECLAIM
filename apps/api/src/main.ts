@@ -20,7 +20,7 @@ const workers = startWorkers(db);
 await registerRepeatables();
 
 const server = app.listen(env.API_PORT, () => {
-  console.log(`[reclaim-api] listening on :${env.API_PORT} (llm=${env.LLM_MODE}, payments=${env.PAYMENTS_MODE})`);
+  console.log(`[reclaim-api] listening on :${env.API_PORT} (llm=${env.LLM_MODEL}, payments=${env.PAYMENTS_MODE})`);
 });
 
 async function shutdown(): Promise<void> {

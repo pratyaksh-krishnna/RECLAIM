@@ -2,9 +2,9 @@ import type { DeclineClass } from '@reclaim/shared';
 
 /**
  * THE deterministic decline table. Maps provider decline codes to a decline
- * class and defines per-class retry legality. This is data + pure functions —
- * no LLM is ever consulted for an unambiguous code. Codes not listed are
- * 'ambiguous' and go to the Triage agent.
+ * class and defines per-class retry legality. This is data + pure functions,
+ * used ONLY for money control (may the system legally attempt another debit?).
+ * It never decides a cause hypothesis — that is always a real agent's job.
  */
 export const DECLINE_TABLE_VERSION = 1;
 
@@ -53,9 +53,4 @@ export function isRetryableClass(declineClass: DeclineClass): boolean {
     case 'ambiguous':
       return false;
   }
-}
-
-/** Classes whose cause is already determined without any agent. */
-export function isUnambiguous(declineClass: DeclineClass): boolean {
-  return declineClass !== 'ambiguous';
 }

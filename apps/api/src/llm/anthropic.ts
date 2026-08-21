@@ -8,22 +8,17 @@ import type { LlmClient, StructuredCallArgs, StructuredCallResult } from './clie
  * still Zod-validates; on schema failure it retries once, then escalates.
  */
 export class AnthropicLlmClient implements LlmClient {
-  readonly mode = 'live' as const;
   private client: Anthropic;
 
   constructor() {
     this.client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
   }
 
-  private modelFor(cls: 'small' | 'mid'): string {
-    return cls === 'small' ? env.LLM_SMALL_MODEL : env.LLM_MID_MODEL;
-  }
-
   async completeStructured(
     args: StructuredCallArgs,
     jsonSchema: Record<string, unknown>,
   ): Promise<StructuredCallResult> {
-    const model = this.modelFor(args.modelClass);
+    const model = env.LLM_MODEL;
     const started = Date.now();
     const response = await this.client.messages.create({
       model,

@@ -120,6 +120,16 @@ export function startWorkers(db: Db): Worker[] {
       }
     }, { connection, concurrency: 1 }),
   ];
+
+  // Without these, a throwing job fails silently and a case just stops advancing.
+  for (const w of workers) {
+    w.on('failed', (job, err) => {
+      console.error(`[worker:${w.name}] job ${job?.id ?? '?'} failed: ${err?.message ?? err}`);
+    });
+    w.on('error', (err) => {
+      console.error(`[worker:${w.name}] error: ${err.message}`);
+    });
+  }
   return workers;
 }
 

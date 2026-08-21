@@ -4,6 +4,8 @@
 
 **Central principle: AI agents reason about recovery; deterministic code controls money.** No agent ever computes, emits, or modifies a monetary amount that reaches a customer or a payment API. There is **no ML anywhere** — deterministic rule tables plus LLM calls with forced structured outputs.
 
+All agent reasoning is a **real Anthropic API call** (`claude-haiku-4-5`). There is no stub, mock, or heuristic fallback in `src/` — `ANTHROPIC_API_KEY` is required to boot. Payments remain mocked by default (`PAYMENTS_MODE=sandbox`).
+
 See [PLAN.md](./PLAN.md) for the architecture recap.
 
 ## Quick start
@@ -11,7 +13,7 @@ See [PLAN.md](./PLAN.md) for the architecture recap.
 ```bash
 corepack enable pnpm            # pnpm ships with Node 22
 pnpm install
-cp .env.example .env            # defaults run fully offline (stub LLM, sandbox payments)
+cp .env.example .env            # then set ANTHROPIC_API_KEY (required); payments stay mocked
 docker compose up -d            # Postgres 16 on :5433, Redis on :6380
 pnpm db:migrate
 ```
@@ -37,7 +39,9 @@ pnpm replay   # feeds Razorpay-shaped webhooks through the live HMAC-verified pa
 
 The replay shows: cases opened and ranked by exposure, causes diagnosed, payment links and UPI pre-debit notices executed against the sandbox provider and mock mailer, a dispute hard-stopping all outreach, an opt-out suppressed globally, a prompt-injection reply flagged classification-only, the 10% holdout visibly untouched, and the Experiments screen concluding *gross recovered X, holdout says Y would have arrived anyway, incremental = X − Y* with a 95% CI.
 
-Real keys are optional: set `LLM_MODE=live` + `ANTHROPIC_API_KEY` for live agents, `PAYMENTS_MODE=live-test` + Razorpay test keys for real test-mode Payment Links.
+`ANTHROPIC_API_KEY` is required (agents are always real model calls). Payments are mocked unless you set `PAYMENTS_MODE=live-test` with Razorpay test keys.
+
+**Cost note:** every case is diagnosed by a real agent, so a full 1,000-case replay makes roughly 3,000 Haiku calls (~$8). Seed a smaller population for cheaper runs.
 
 ## Verification
 
@@ -46,6 +50,8 @@ pnpm test        # 87 tests: policy engine, FSM, idempotency, ingestion, e2e pip
 pnpm typecheck
 pnpm lint
 ```
+
+Tests inject a `FakeLlmClient` at the `LlmClient` seam (`test/helpers/fakeLlm.ts`) so the suite is deterministic and free to run; everything downstream of that seam — Zod contracts, lint, policy engine, tools, FSM — is exercised for real. No fake exists in `src/`.
 
 The safety suite (`apps/api/test/safety/`) covers each non-negotiable: schema+policy+lint gating of every LLM output, webhook dedupe, `caseId:interventionId:attempt` execution idempotency, pre-debit-notice-before-mandate-debit, dispute/opt-out hard stops, prompt-injection red-team cases, and contact/retry ceilings that hold against agent proposals.
 

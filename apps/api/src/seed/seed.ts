@@ -12,7 +12,10 @@ import { generatePopulation, mulberry32 } from './generator.js';
  */
 
 const rng = mulberry32(20260821);
-const population = generatePopulation(rng, 1000);
+// Every case is diagnosed by a real model call, so seed size drives API cost.
+// SEED_COUNT lets you run a cheap demo (e.g. SEED_COUNT=20) instead of 1,000.
+const SEED_COUNT = Number(process.env['SEED_COUNT'] ?? 1000);
+const population = generatePopulation(rng, SEED_COUNT);
 const now = new Date();
 
 interface ReplayEvent {

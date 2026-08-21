@@ -1,6 +1,6 @@
 /**
- * PaymentProvider abstraction. Only the Razorpay adapter is implemented
- * (test mode); the interface exists so another PSP can be added later.
+ * PaymentProvider abstraction with two implementations: the Razorpay
+ * test-mode adapter and the offline sandbox used for demos.
  * NO amount in these calls ever originates from an LLM — callers resolve
  * amounts server-side from the invoice.
  */

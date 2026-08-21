@@ -9,7 +9,8 @@ export default defineConfig({
       NODE_ENV: 'test',
       DATABASE_URL: 'postgres://reclaim:reclaim@localhost:5433/reclaim_test',
       REDIS_URL: 'redis://localhost:6380',
-      LLM_MODE: 'stub',
+      // env.ts requires a key; tests inject FakeLlmClient at the LlmClient seam
+      ANTHROPIC_API_KEY: 'test-key-not-used-fake-llm-injected',
       PAYMENTS_MODE: 'sandbox',
       RAZORPAY_WEBHOOK_SECRET: 'whsec_test_secret',
     },

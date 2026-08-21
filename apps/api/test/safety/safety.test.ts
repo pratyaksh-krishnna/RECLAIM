@@ -12,7 +12,7 @@ import {
   recoveryCases,
 } from '../../src/db/schema.js';
 import { InProcessRuntime } from '../../src/runtime/inProcessRuntime.js';
-import { StubLlmClient } from '../../src/llm/stub.js';
+import { FakeLlmClient } from '../helpers/fakeLlm.js';
 import { SandboxPaymentProvider } from '../../src/payments/sandboxAdapter.js';
 import { ensureSeedPolicy } from '../../src/policy/service.js';
 import { runAgentJob } from '../../src/agents/runner.js';
@@ -83,7 +83,6 @@ describe('SAFETY 1: no LLM output reaches a customer or payment API without sche
   it('garbage LLM output escalates to human review after one retry — nothing executes, nothing sends', async () => {
     const sent: Array<{ subject: string }> = [];
     const garbage: LlmClient = {
-      mode: 'stub',
       completeStructured: async () => ({
         raw: { totally: 'not-schema-conformant', amount: 999999 },
         modelId: 'garbage',
@@ -111,9 +110,8 @@ describe('SAFETY 1: no LLM output reaches a customer or payment API without sche
   it('an LLM that fills free slots with an amount and URL is linted out — the email is never sent', async () => {
     const sent: Array<{ subject: string }> = [];
     const malicious: LlmClient = {
-      mode: 'stub',
       completeStructured: async (args) => {
-        const stub = new StubLlmClient();
+        const fake = new FakeLlmClient();
         if (args.schemaName === 'communication_output') {
           return {
             raw: { slotFills: { greeting: 'Pay ₹99999 now at http://evil.example', context_sentence: 'x', sign_off: 'y' } },
@@ -139,7 +137,7 @@ describe('SAFETY 1: no LLM output reaches a customer or payment API without sche
             modelId: 'malicious', inputTokens: 1, outputTokens: 1, latencyMs: 1,
           };
         }
-        return stub.completeStructured(args);
+        return fake.completeStructured(args);
       },
     };
     const rt = runtimeWith(malicious, sent);
@@ -155,7 +153,7 @@ describe('SAFETY 1: no LLM output reaches a customer or payment API without sche
 describe('SAFETY 7: budgets and ceilings hold even when an agent proposes otherwise', () => {
   it('a 4th email inside 14 days is DENIED by the contact budget', async () => {
     const sent: Array<{ subject: string }> = [];
-    const rt = runtimeWith(new StubLlmClient(), sent);
+    const rt = runtimeWith(new FakeLlmClient(), sent);
     const { customer, invoice } = await openCase(rt);
     await rt.drain();
     const [caseRow] = await db.select().from(recoveryCases).where(eq(recoveryCases.invoiceId, invoice.id));
@@ -185,7 +183,7 @@ describe('SAFETY 7: budgets and ceilings hold even when an agent proposes otherw
 
   it('a 5th recovery attempt is DENIED by the global attempt cap regardless of proposal', async () => {
     const sent: Array<{ subject: string }> = [];
-    const rt = runtimeWith(new StubLlmClient(), sent);
+    const rt = runtimeWith(new FakeLlmClient(), sent);
     const { invoice } = await openCase(rt);
     await rt.drain();
     const [caseRow] = await db.select().from(recoveryCases).where(eq(recoveryCases.invoiceId, invoice.id));
@@ -206,7 +204,7 @@ describe('SAFETY 7: budgets and ceilings hold even when an agent proposes otherw
 describe('SAFETY 6: injection variants stay classification-only', () => {
   it('a refund-demand reply produces no refund (no such action exists) and flags review', async () => {
     const sent: Array<{ subject: string }> = [];
-    const rt = runtimeWith(new StubLlmClient(), sent);
+    const rt = runtimeWith(new FakeLlmClient(), sent);
     const { customer, invoice } = await openCase(rt);
     await rt.drain();
     const [caseRow] = await db.select().from(recoveryCases).where(eq(recoveryCases.invoiceId, invoice.id));
@@ -230,7 +228,7 @@ describe('SAFETY 6: injection variants stay classification-only', () => {
 describe('SAFETY: opt-out is global across cases', () => {
   it('a second case for an opted-out customer cannot email them', async () => {
     const sent: Array<{ subject: string }> = [];
-    const rt = runtimeWith(new StubLlmClient(), sent);
+    const rt = runtimeWith(new FakeLlmClient(), sent);
     const { customer } = await openCase(rt);
     await rt.drain();
     await db.update(customers).set({ optedOut: true, optedOutAt: NOON_IST() }).where(eq(customers.id, customer.id));

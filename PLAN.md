@@ -4,7 +4,7 @@
 
 **Central principle:** AI agents reason about recovery; deterministic code controls money. No agent ever computes, emits, or modifies a monetary amount that reaches a customer or payment API.
 
-**Hard constraint:** No ML anywhere. All decision logic = deterministic rules and tables; reasoning = Anthropic LLM calls with forced tool use / strict Zod-validated JSON. Schema failure → one retry → human review.
+**Hard constraint:** No ML anywhere. All money control = deterministic rules and tables; all agent reasoning = real `claude-haiku-4-5` calls (no stub/mock in `src/`); reasoning = Anthropic LLM calls with forced tool use / strict Zod-validated JSON. Schema failure → one retry → human review.
 
 ---
 
@@ -47,11 +47,11 @@ detected → diagnosed → planned → pending_policy → pending_approval → e
 
 ### Agents (BullMQ workers; communicate only via typed queue jobs + structured records)
 
-| Agent | Model class | Job |
+| Agent | Model | Job |
 |---|---|---|
-| Triage | Haiku | Leak taxonomy + urgency, **only for ambiguous cases** — unambiguous decline codes resolved by the deterministic decline table before the agent runs |
-| Diagnosis | Sonnet | Cause hypothesis from CLOSED enum (`expired_card, insufficient_funds, hard_decline, auth_required, processor_error, procurement_delay, invoice_dispute_suspected, cash_flow_stress, habitual_late_payer, unknown`) + confidence + evidence citing record IDs |
-| Strategy | Sonnet | `ProposedAction` from the enumerated catalog only — never an execution |
+| Triage | Haiku | Leak taxonomy + urgency for **every** case (no hardcoded short-circuit) |
+| Diagnosis | Haiku | Cause hypothesis from CLOSED enum (`expired_card, insufficient_funds, hard_decline, auth_required, processor_error, procurement_delay, invoice_dispute_suspected, cash_flow_stress, habitual_late_payer, unknown`) + confidence + evidence citing record IDs |
+| Strategy | Haiku | `ProposedAction` from the enumerated catalog only — never an execution |
 | Communication | Haiku | Fills bounded free-text slots in approved template skeletons (EN/Hindi/Hinglish). Amounts/dates/links/legal text are immutable server-injected slots. Deterministic lint rejects any numeral, URL, or currency symbol in free slots |
 | Reply Interpreter | Haiku | Inbound text → intent enum (`paid_claim, will_pay, promise_with_date, dispute, opt_out, question, hostile, unclear`) + promise extraction. Customer text passed only as delimited data, never instructions |
 | Summarizer | Haiku | Case summaries for escalation inbox, citing event IDs |
@@ -116,8 +116,8 @@ Each phase lands with its own Vitest coverage; TDD for policy engine, tools, att
 
 ## Open Questions / Working Assumptions
 
-1. **Spec inconsistency — "Stripe" in the tools section:** the spec says idempotency keys are "passed through to Stripe" but mandates Razorpay-only. **Assumption:** that's a leftover; keys pass to the provider via the `PaymentProvider` interface, Razorpay adapter only. Razorpay's idempotency support is verified per endpoint at implementation time; internal idempotency (unique constraint) is enforced regardless.
-2. **API keys:** Anthropic + Razorpay test keys go in `.env` (documented in `.env.example`). **Assumption:** build and seed/replay must work without real keys — LLM provider gets a deterministic stub mode for tests/demo, and the Razorpay adapter a sandbox-record mode, so the demo runs end-to-end offline; real keys switch it live.
+1. **Stripe removed entirely (user decision, 2026-08-22):** no Stripe code, adapter, or references remain. The `PaymentProvider` interface has exactly two implementations — the Razorpay test adapter and the offline sandbox. Internal idempotency (unique constraint) is enforced regardless of provider support.
+2. **API keys (revised 2026-08-22):** `ANTHROPIC_API_KEY` is REQUIRED — agents are always real `claude-haiku-4-5` calls and the API refuses to boot without it. Payments stay mocked via the sandbox provider (no Razorpay keys needed). Tests inject a fake at the `LlmClient` seam; no fake exists in `src/`.
 3. **Amount cap & thresholds:** autonomous amount cap, confidence-gate exposure threshold, quiet hours window. **Assumption:** seeded as editable policy data — cap ₹5,000, exposure threshold ₹10,000, quiet hours 21:00–09:00 IST — all changeable in Policy Studio.
 4. **Auth:** simple JWT sessions with seeded demo users (admin/operator/viewer), no signup flow.
 5. **Git:** directory is not a repo. **Assumption:** `git init` and commit per phase.
@@ -129,4 +129,4 @@ Each phase lands with its own Vitest coverage; TDD for policy engine, tools, att
 
 **Removed by user decision (2026-08-21):** revenue-at-risk priority scoring (E·L·U−C and the L/U lookup tables). Queue ranks by exposure (amount due); Command Center "open revenue at risk" is a plain sum of open amounts due.
 
-Checkout abandonment, SMS/WhatsApp, voice, any ML/vector store/RAG, refunds/discounts/payment plans, Stripe or any second PSP (interface only), microservices, Kafka, websockets, RL/bandits. No stubs for these.
+Checkout abandonment, SMS/WhatsApp, voice, any ML/vector store/RAG, refunds/discounts/payment plans, any second PSP, microservices, Kafka, websockets, RL/bandits. No stubs for these.

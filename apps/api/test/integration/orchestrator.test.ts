@@ -38,13 +38,13 @@ describe('orchestrator case creation', () => {
 
     const cases = await db.select().from(recoveryCases).where(eq(recoveryCases.invoiceId, inv.id));
     expect(cases).toHaveLength(1);
-    // unambiguous code → deterministic diagnosis, no LLM needed
-    expect(cases[0]!.state).toBe('diagnosed');
-    expect(cases[0]!.causeHypothesis).toBe('insufficient_funds');
+    // no cause is ever inferred from a hardcoded table — a real agent diagnoses it
+    expect(cases[0]!.state).toBe('detected');
+    expect(cases[0]!.causeHypothesis).toBeNull();
     expect(cases[0]!.holdoutArm).toBe('treatment');
   });
 
-  it('ambiguous decline codes start at detected (triage agent path)', async () => {
+  it('every case starts at detected and routes to the triage agent', async () => {
     const c = await seedCustomer(db);
     const inv = await seedInvoice(db, c.id);
     const { deps, calls } = makeFakeDeps({ rng: () => 0.99 });
@@ -68,7 +68,7 @@ describe('orchestrator case creation', () => {
     await db.insert(agentDecisions).values({
       caseId: caseRow!.id,
       agent: 'triage',
-      model: 'stub',
+      model: 'fake-test-double',
       promptVersionHash: 'test',
       inputSnapshot: {},
       output: {},

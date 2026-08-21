@@ -5,11 +5,11 @@ import type { z } from 'zod';
  * supplies a Zod schema; the provider must return JSON for that schema, which
  * the RUNNER validates with Zod. Free-text parsing of LLM output is forbidden
  * everywhere in this codebase.
+ *
+ * There is exactly one production implementation (Anthropic). No stub, no
+ * offline mode: agent reasoning is always a real model call.
  */
-export type ModelClass = 'small' | 'mid';
-
 export interface StructuredCallArgs {
-  modelClass: ModelClass;
   schemaName: string;
   system: string;
   /** structured input; serialized as the user message, passed to stubs directly */
@@ -27,7 +27,6 @@ export interface StructuredCallResult {
 }
 
 export interface LlmClient {
-  readonly mode: 'stub' | 'live';
   completeStructured(args: StructuredCallArgs, jsonSchema: Record<string, unknown>): Promise<StructuredCallResult>;
 }
 

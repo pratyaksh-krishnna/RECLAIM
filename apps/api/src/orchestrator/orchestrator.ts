@@ -12,8 +12,6 @@ import {
 } from '../db/schema.js';
 import { writeAudit } from '../audit/audit.js';
 import { classifyAttribution } from '../attribution/attribution.js';
-import { causeFromDeclineCode } from '../domain/causeMapping.js';
-import { classifyDeclineCode, isUnambiguous } from '../domain/declineTable.js';
 import { findOrCreateCaseForInvoice, lockCase, transitionCase, type CaseRow } from './caseService.js';
 import { isTerminal } from './fsm.js';
 
@@ -42,13 +40,13 @@ const nowOf = (deps: OrchestratorDeps) => (deps.now ?? (() => new Date()))();
 export async function handleCanonicalEvent(db: Db, deps: OrchestratorDeps, event: CanonicalEvent): Promise<void> {
   switch (event.type) {
     case 'payment.failed': {
-      const declineClass = classifyDeclineCode(event.declineCode);
-      const cause = causeFromDeclineCode(event.declineCode);
+      // The decline CLASS still gates retry legality deterministically (money
+      // control), but the CAUSE is never inferred by hardcoded mapping — every
+      // case is diagnosed by a real agent.
       const { caseRow, created } = await db.transaction(async (tx) => {
         const res = await findOrCreateCaseForInvoice(tx, {
           invoiceId: event.invoiceId,
           leakType: 'subscription_payment_failure',
-          causeHypothesis: isUnambiguous(declineClass) ? cause : null,
           ...(deps.rng ? { rng: deps.rng } : {}),
           ...(deps.now ? { now: deps.now } : {}),
         });

@@ -37,19 +37,17 @@ export interface AgentDeps {
 
 interface AgentSpec<T> {
   schemaName: string;
-  modelClass: 'small' | 'mid';
   zod: z.ZodType<T>;
   /** extra deterministic validation beyond the schema (e.g. the free-slot lint) */
   extraValidate?: (output: T) => string | null;
 }
 
 const SPECS = {
-  triage: { schemaName: 'triage_output', modelClass: 'small', zod: TriageOutput } as AgentSpec<TriageOutput>,
-  diagnosis: { schemaName: 'diagnosis_output', modelClass: 'mid', zod: DiagnosisOutput } as AgentSpec<DiagnosisOutput>,
-  strategy: { schemaName: 'strategy_output', modelClass: 'mid', zod: ProposedAction } as AgentSpec<ProposedAction>,
+  triage: { schemaName: 'triage_output', zod: TriageOutput } as AgentSpec<TriageOutput>,
+  diagnosis: { schemaName: 'diagnosis_output', zod: DiagnosisOutput } as AgentSpec<DiagnosisOutput>,
+  strategy: { schemaName: 'strategy_output', zod: ProposedAction } as AgentSpec<ProposedAction>,
   communication: {
     schemaName: 'communication_output',
-    modelClass: 'small',
     zod: CommunicationOutput,
     extraValidate: (o: CommunicationOutput) => {
       const violations = lintFreeSlotFills(o.slotFills);
@@ -60,10 +58,9 @@ const SPECS = {
   } as AgentSpec<CommunicationOutput>,
   reply_interpreter: {
     schemaName: 'reply_interpretation',
-    modelClass: 'small',
     zod: ReplyInterpretation,
   } as AgentSpec<ReplyInterpretation>,
-  summarizer: { schemaName: 'summarizer_output', modelClass: 'small', zod: SummarizerOutput } as AgentSpec<SummarizerOutput>,
+  summarizer: { schemaName: 'summarizer_output', zod: SummarizerOutput } as AgentSpec<SummarizerOutput>,
 } as const;
 
 export async function runAgentJob(
@@ -95,7 +92,7 @@ export async function runAgentJob(
   let usage = { modelId: 'unknown', inputTokens: 0, outputTokens: 0, latencyMs: 0 };
   for (let attempt = 1; attempt <= 2 && parsed === null; attempt++) {
     const result = await deps.llm.completeStructured(
-      { modelClass: spec.modelClass, schemaName: spec.schemaName, system, input: prep.input },
+      { schemaName: spec.schemaName, system, input: prep.input },
       jsonSchema,
     );
     usage = {

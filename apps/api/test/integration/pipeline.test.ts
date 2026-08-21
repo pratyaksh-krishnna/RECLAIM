@@ -16,7 +16,7 @@ import {
 } from '../../src/db/schema.js';
 import { InProcessRuntime } from '../../src/runtime/inProcessRuntime.js';
 import { classifyDeclineCode } from '../../src/domain/declineTable.js';
-import { StubLlmClient } from '../../src/llm/stub.js';
+import { FakeLlmClient } from '../helpers/fakeLlm.js';
 import { SandboxPaymentProvider } from '../../src/payments/sandboxAdapter.js';
 import { ensureSeedPolicy } from '../../src/policy/service.js';
 import { runAgentJob } from '../../src/agents/runner.js';
@@ -26,7 +26,7 @@ const NOON_IST = () => new Date('2026-08-21T06:30:00.000Z');
 
 function makeRuntime(sent: Array<{ to: string; subject: string; body: string }>) {
   return new InProcessRuntime(db, {
-    llm: new StubLlmClient(),
+    llm: new FakeLlmClient(),
     provider: new SandboxPaymentProvider(),
     mailer: {
       name: 'test',

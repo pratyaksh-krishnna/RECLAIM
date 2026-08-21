@@ -1,9 +1,11 @@
-import { env } from '../config/env.js';
 import { AnthropicLlmClient } from './anthropic.js';
 import type { LlmClient } from './client.js';
-import { StubLlmClient } from './stub.js';
 
+/**
+ * The only LLM client in the system. Agent reasoning is always a real
+ * Anthropic model call — there is no stub, mock, or heuristic fallback.
+ */
 export function getLlmClient(): LlmClient {
-  return env.LLM_MODE === 'live' ? new AnthropicLlmClient() : new StubLlmClient();
+  return new AnthropicLlmClient();
 }
 export type { LlmClient, StructuredCallArgs, StructuredCallResult } from './client.js';
