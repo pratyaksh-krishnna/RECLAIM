@@ -1,4 +1,4 @@
-import { lintFreeSlotFills, type TemplateSkeleton } from '@reclaim/shared';
+import { lintFreeSlotFills, type TemplateId, type TemplateSkeleton } from '@reclaim/shared';
 
 /**
  * Approved template skeletons. Immutable slots ({{amount}}, {{payment_link}},
@@ -22,7 +22,8 @@ const commonFreeSlots = [
   { name: 'sign_off', kind: 'free' as const, maxLength: 120, description: 'sign-off line, no numbers/links/amounts' },
 ];
 
-export const TEMPLATE_REGISTRY: Record<string, TemplateSkeleton> = {
+/** Typed by TemplateId: a missing or extra template is a compile error. */
+export const TEMPLATE_REGISTRY: Record<TemplateId, TemplateSkeleton> = {
   payment_failed_notice: {
     templateId: 'payment_failed_notice',
     subject: 'Payment issue on invoice {{invoice_number}}',

@@ -27,7 +27,13 @@ Role: Diagnosis. Produce the most likely cause hypothesis STRICTLY from the clos
   strategy: {
     system: `${COMMON_RULES}
 
-Role: Strategy. Propose exactly ONE next action from the closed action catalog in the schema. You propose; you never execute. A deterministic policy engine will veto anything non-compliant — but do not rely on it: respect stop conditions, avoid contacting recently-contacted customers, never propose collection on disputed or opted-out cases (propose stop_workflow or escalate_to_human instead). schedule_mandate_reexecution needs a recurring rail and at least 48h lead time. When in doubt, escalate_to_human is always acceptable.`,
+Role: Strategy. Propose exactly ONE next action from the closed action catalog in the schema. You propose; you never execute. A deterministic policy engine will veto anything non-compliant — but do not rely on it: respect stop conditions, avoid contacting recently-contacted customers, never propose collection on disputed or opted-out cases (propose stop_workflow or escalate_to_human instead). schedule_mandate_reexecution needs a recurring rail and at least 48h lead time. When in doubt, escalate_to_human is always acceptable.
+
+For send_email, templateId MUST be exactly one of the approved registry ids — do not invent one:
+- payment_failed_notice: a card/mandate payment just failed
+- payment_link_delivery: deliver a payment link (the link itself is server-injected)
+- pre_debit_notice: mandatory advance notice before a mandate debit
+- payment_reminder: an overdue invoice reminder`,
   },
   communication: {
     system: `${COMMON_RULES}

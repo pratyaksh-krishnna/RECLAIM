@@ -20,7 +20,7 @@ import { runAgentJob, type AgentDeps } from '../agents/runner.js';
 import { advanceCase, handleCanonicalEvent, type OrchestratorDeps } from '../orchestrator/orchestrator.js';
 import { sweepCases } from '../orchestrator/sweep.js';
 import { evaluateAndPersistPolicy, getActivePolicy } from '../policy/service.js';
-import { executeIntervention, executeScheduledMandateDebit, type ToolDeps } from '../tools/execute.js';
+import { abandonIntervention, executeIntervention, executeScheduledMandateDebit, type ToolDeps } from '../tools/execute.js';
 import { getLlmClient } from '../llm/index.js';
 import { getPaymentProvider } from '../payments/index.js';
 import { getMailer } from '../mailer/index.js';
@@ -127,6 +127,15 @@ export function startWorkers(db: Db): Worker[] {
   for (const w of workers) {
     w.on('failed', (job, err) => {
       console.error(`[worker:${w.name}] job ${job?.id ?? '?'} failed: ${err?.message ?? err}`);
+      // Once a tool job is out of retries, escalate rather than strand the case.
+      if (w.name === QUEUE_NAMES.tools && job && job.attemptsMade >= (job.opts.attempts ?? 1)) {
+        const data = job.data as ToolJob;
+        void abandonIntervention(db, {
+          caseId: data.caseId,
+          interventionId: data.interventionId,
+          reason: err?.message ?? 'unknown tool failure',
+        }).catch((e) => console.error('[worker:tools] abandon failed:', e));
+      }
     });
     w.on('error', (err) => {
       console.error(`[worker:${w.name}] error: ${err.message}`);

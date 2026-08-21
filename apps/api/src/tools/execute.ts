@@ -17,6 +17,7 @@ import { writeAudit } from '../audit/audit.js';
 import type { Mailer } from '../mailer/index.js';
 import type { PaymentProvider } from '../payments/index.js';
 import { lockCase, transitionCase, type CaseRow } from '../orchestrator/caseService.js';
+import { isTerminal } from '../orchestrator/fsm.js';
 import {
   DEFAULT_FREE_FILLS,
   TEMPLATE_REGISTRY,
@@ -44,6 +45,31 @@ export interface ToolDeps {
 }
 
 export class ToolAuthorizationError extends Error {}
+
+/**
+ * Called when a tool job has exhausted its retries. Without this a permanently
+ * failing tool leaves the case parked in 'executing' forever with no human
+ * ever told about it.
+ */
+export async function abandonIntervention(
+  db: Db,
+  args: { caseId: string; interventionId: string; reason: string },
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    const caseRow = await lockCase(tx, args.caseId);
+    if (!caseRow) return;
+    await tx.update(interventions).set({ status: 'failed' }).where(eq(interventions.id, args.interventionId));
+    if (!isTerminal(caseRow.state) && caseRow.state !== 'escalated') {
+      await transitionCase(tx, caseRow, 'escalated', { reason: `tool failed permanently: ${args.reason}` });
+    }
+    await writeAudit(tx, {
+      caseId: args.caseId,
+      actorType: 'system',
+      eventType: 'tool.abandoned',
+      payload: { interventionId: args.interventionId, reason: args.reason },
+    });
+  });
+}
 
 const EXECUTABLE_CASE_STATES = ['executing', 'waiting', 'escalated', 'disputed'] as const;
 

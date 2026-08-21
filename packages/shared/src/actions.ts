@@ -21,6 +21,21 @@ export const ActionType = z.enum([
 ]);
 export type ActionType = z.infer<typeof ActionType>;
 
+/**
+ * The approved template registry, as a CLOSED enum. templateId used to be a
+ * free string, so a model could invent a plausible-sounding template
+ * ("expired_card_recovery") that passed schema validation and the policy gate,
+ * then failed at the tool — stranding the case. Now an unknown template fails
+ * the Zod gate, is retried once, then escalated, like any other bad output.
+ */
+export const TemplateId = z.enum([
+  'payment_failed_notice',
+  'payment_link_delivery',
+  'pre_debit_notice',
+  'payment_reminder',
+]);
+export type TemplateId = z.infer<typeof TemplateId>;
+
 export const ScheduleMandateReexecution = z.object({
   type: z.literal('schedule_mandate_reexecution'),
   /** ISO datetime; policy enforces the >=24h pre-debit notification precedes it */
@@ -34,7 +49,7 @@ export const CreatePaymentLink = z.object({
 
 export const SendEmail = z.object({
   type: z.literal('send_email'),
-  templateId: z.string().min(1),
+  templateId: TemplateId,
   language: Language,
   toneRegister: ToneRegister,
   /** bounded free-text slot fills keyed by slot name; linted deterministically */

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ActionParams } from '@reclaim/shared';
 import {
   DEFAULT_FREE_FILLS,
   TEMPLATE_REGISTRY,
@@ -42,5 +43,40 @@ describe('template rendering', () => {
   it('formats INR deterministically', () => {
     expect(formatINR(1_600_000)).toBe('₹16,000.00');
     expect(formatINR(99_900)).toBe('₹999.00');
+  });
+});
+
+describe('templateId is a closed enum (agents cannot invent templates)', () => {
+  it('rejects a hallucinated template id at the schema gate', () => {
+    // These are real ids Haiku invented in a live run; each stranded a case
+    // because templateId used to be a free string that only failed at the tool.
+    for (const bogus of [
+      'soft_decline_insufficient_funds',
+      'expired_card_recovery',
+      'card_expiry_renewal_prompt',
+      'invoice_overdue_initial_outreach',
+    ]) {
+      const result = ActionParams.safeParse({
+        type: 'send_email',
+        templateId: bogus,
+        language: 'en',
+        toneRegister: 'formal',
+        slotFills: {},
+      });
+      expect(result.success).toBe(false);
+    }
+  });
+
+  it('accepts every id in the approved registry', () => {
+    for (const id of Object.keys(TEMPLATE_REGISTRY)) {
+      const result = ActionParams.safeParse({
+        type: 'send_email',
+        templateId: id,
+        language: 'en',
+        toneRegister: 'formal',
+        slotFills: {},
+      });
+      expect(result.success).toBe(true);
+    }
   });
 });
