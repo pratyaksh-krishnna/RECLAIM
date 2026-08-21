@@ -167,6 +167,13 @@ export const recoveryCases = pgTable(
     lastProgressAt: timestamp('last_progress_at', ts).notNull().defaultNow(),
     waitUntil: timestamp('wait_until', ts),
     openedAt: timestamp('opened_at', ts).notNull().defaultNow(),
+    /**
+     * Set when a dispute is raised, cleared ONLY by an explicit human
+     * resolution. Deliberately NOT derived from `state`: the compliance
+     * freeze must survive the case moving through other states.
+     */
+    disputedAt: timestamp('disputed_at', ts),
+    disputeResolvedByUserId: uuid('dispute_resolved_by_user_id'),
     closedAt: timestamp('closed_at', ts),
     stopReason: text('stop_reason'),
   },

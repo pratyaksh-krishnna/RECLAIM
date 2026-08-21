@@ -40,6 +40,8 @@ export async function transitionCase(
       state: to,
       lastProgressAt: now,
       ...(closing ? { closedAt: now } : {}),
+      // a dispute is recorded as a durable fact, not just a state
+      ...(to === 'disputed' && caseRow.disputedAt === null ? { disputedAt: now } : {}),
       ...(opts.extra ?? {}),
     })
     .where(eq(recoveryCases.id, caseRow.id));
@@ -51,6 +53,7 @@ export async function transitionCase(
     payload: { from: caseRow.state, to, reason: opts.reason ?? null },
   });
   caseRow.state = to;
+  if (to === 'disputed' && caseRow.disputedAt === null) caseRow.disputedAt = now;
 }
 
 export interface CreateCaseArgs {

@@ -87,7 +87,9 @@ export async function evaluateAndPersistPolicy(
     rail: latestFailure?.rail ?? 'netbanking',
     declineClass: latestFailure?.declineClass ?? null,
     hasOptOut: customer.optedOut,
-    hasOpenDispute: caseRow.state === 'disputed',
+    // durable flag, not `state === 'disputed'` — moving the case to another
+    // state must never silently lift a compliance freeze
+    hasOpenDispute: caseRow.disputedAt !== null,
     channelConsent: { email: customer.emailConsent },
     customerTimezone: customer.timezone,
     nowIso: nowDate.toISOString(),

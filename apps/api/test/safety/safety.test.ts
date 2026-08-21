@@ -14,7 +14,8 @@ import {
 import { InProcessRuntime } from '../../src/runtime/inProcessRuntime.js';
 import { FakeLlmClient } from '../helpers/fakeLlm.js';
 import { SandboxPaymentProvider } from '../../src/payments/sandboxAdapter.js';
-import { ensureSeedPolicy } from '../../src/policy/service.js';
+import { ensureSeedPolicy, evaluateAndPersistPolicy } from '../../src/policy/service.js';
+import { lockCase, transitionCase } from '../../src/orchestrator/caseService.js';
 import { runAgentJob } from '../../src/agents/runner.js';
 import { classifyDeclineCode } from '../../src/domain/declineTable.js';
 import { seedCustomer, seedInvoice } from '../helpers/fixtures.js';
@@ -250,5 +251,45 @@ describe('SAFETY: opt-out is global across cases', () => {
     expect(sent.length).toBe(before); // policy denied every contact/money action
     const [case2] = await db.select().from(recoveryCases).where(eq(recoveryCases.invoiceId, inv2.id));
     expect(['re_evaluating', 'escalated', 'stopped', 'detected', 'diagnosed', 'planned']).toContain(case2!.state);
+  });
+});
+
+describe('SAFETY: an open dispute survives state changes', () => {
+  it('a human intervention on a disputed case cannot defeat the dispute freeze', async () => {
+    const sent: Array<{ subject: string }> = [];
+    const rt = runtimeWith(new FakeLlmClient(), sent);
+    const { invoice } = await openCase(rt);
+    await rt.drain();
+    const [caseRow] = await db.select().from(recoveryCases).where(eq(recoveryCases.invoiceId, invoice.id));
+
+    // customer disputes -> case frozen
+    await db.transaction(async (tx) => {
+      const locked = await lockCase(tx, caseRow!.id);
+      await transitionCase(tx, locked!, 'disputed', { reason: 'customer disputes the charge' });
+    });
+
+    // an operator now walks the case out of 'disputed' and proposes outreach,
+    // exactly as POST /intervene does. The freeze must still hold.
+    const [proposal] = await db
+      .insert(interventions)
+      .values({
+        caseId: caseRow!.id,
+        actionType: 'send_email',
+        params: { type: 'send_email', templateId: 'payment_reminder', language: 'en', toneRegister: 'formal', slotFills: {} },
+        proposedBy: 'human',
+        status: 'proposed',
+        rationale: 'human-initiated',
+        stopConditions: [],
+      })
+      .returning();
+    const verdict = await db.transaction(async (tx) => {
+      const locked = await lockCase(tx, caseRow!.id);
+      await transitionCase(tx, locked!, 're_evaluating', { reason: 'human intervention' });
+      const moved = await lockCase(tx, caseRow!.id);
+      return evaluateAndPersistPolicy(tx, moved!, proposal!.id, NOON_IST);
+    });
+
+    expect(verdict.verdict).toBe('DENY');
+    expect(verdict.reason).toContain('dispute');
   });
 });
