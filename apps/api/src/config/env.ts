@@ -16,7 +16,7 @@ const EnvSchema = z.object({
 
   /** Required: every agent call goes to the real Anthropic API. There is no offline mode. */
   ANTHROPIC_API_KEY: z.string().min(1, 'ANTHROPIC_API_KEY is required — agents call the real Anthropic API'),
-  LLM_MODEL: z.string().default('claude-haiku-4-5'),
+  LLM_MODEL: z.string().default('claude-haiku-3-5'),
 
   RAZORPAY_KEY_ID: z.string().optional().default(''),
   RAZORPAY_KEY_SECRET: z.string().optional().default(''),

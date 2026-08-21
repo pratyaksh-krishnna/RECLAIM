@@ -65,11 +65,13 @@ export function buildLiveDeps(db: Db): { orchestrator: OrchestratorDeps; agents:
 
 export function startWorkers(db: Db): Worker[] {
   const deps = buildLiveDeps(db);
-  const connection = makeRedis();
-  const opts = { connection, concurrency: 4 };
+  // BullMQ Workers issue BLOCKING Redis commands, soevery Worker needs its OWN
+  // connection. Sharing one across workers causes silent, erratic job loss
+  // under burst — jobs complete but follow-up jobs never get delivered.
+  const opts = () => ({ connection: makeRedis(), concurrency: 4 });
 
   const workers: Worker[] = [
-    new Worker<NormalizeJob>(QUEUE_NAMES.normalize, async (job) => processInboxRow(db, job.data.inboxId), opts),
+    new Worker<NormalizeJob>(QUEUE_NAMES.normalize, async (job) => processInboxRow(db, job.data.inboxId), opts()),
 
     new Worker(QUEUE_NAMES.orchestrate, async (job) => {
       const data = job.data as CaseStepJob | { outboxId: string; eventType: string; payload: unknown };
@@ -78,13 +80,13 @@ export function startWorkers(db: Db): Worker[] {
       } else {
         await handleCanonicalEvent(db, deps.orchestrator, CanonicalEvent.parse(data.payload));
       }
-    }, opts),
+    }, opts()),
 
-    new Worker<AgentJob>(QUEUE_NAMES.agents, async (job) => runAgentJob(db, deps.agents, job.data), { connection, concurrency: 2 }),
+    new Worker<AgentJob>(QUEUE_NAMES.agents, async (job) => runAgentJob(db, deps.agents, job.data), { connection: makeRedis(), concurrency: 2 }),
 
     new Worker<ToolJob>(QUEUE_NAMES.tools, async (job) => {
       await executeIntervention(db, deps.tools, job.data);
-    }, opts),
+    }, opts()),
 
     new Worker<ScheduledJob>(QUEUE_NAMES.scheduled, async (job) => {
       const data = job.data;
@@ -99,7 +101,7 @@ export function startWorkers(db: Db): Worker[] {
         case 'pre_debit_notification':
           return; // notice is sent synchronously by the scheduling tool; job kept for observability
       }
-    }, opts),
+    }, opts()),
 
     new Worker<MaintenanceJob>(QUEUE_NAMES.maintenance, async (job) => {
       switch (job.data.kind) {
@@ -118,7 +120,7 @@ export function startWorkers(db: Db): Worker[] {
           await sweepCases(db, deps.orchestrator.enqueueCaseStep);
           return;
       }
-    }, { connection, concurrency: 1 }),
+    }, { connection: makeRedis(), concurrency: 1 }),
   ];
 
   // Without these, a throwing job fails silently and a case just stops advancing.

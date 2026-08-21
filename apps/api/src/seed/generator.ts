@@ -75,7 +75,7 @@ export function generatePopulation(rng: () => number, total = 1000): SeedCustome
     ['processor_error', Math.round(total * 0.04)],
     ['b2b_overdue', Math.round(total * 0.25)],
     ['habitual_late_payer', Math.round(total * 0.05)],
-    ['afa_high_value', 8],
+    ['afa_high_value', Math.max(1, Math.round(total * 0.008))],
     ['scripted_dispute', 1],
     ['scripted_optout', 1],
   ];

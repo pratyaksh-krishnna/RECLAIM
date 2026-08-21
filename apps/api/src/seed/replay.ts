@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql as dsql } from 'drizzle-orm';
 import { db, sql } from '../db/client.js';
 import { env } from '../config/env.js';
 import { communications, invoices, recoveryCases } from '../db/schema.js';
@@ -79,23 +79,32 @@ async function postInbound(body: unknown): Promise<number> {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function waitForQuiescence(label: string, maxMs = 180_000): Promise<void> {
-  let last = -1;
-  let stable = 0;
+async function waitForQuiescence(label: string, maxMs = 240_000): Promise<void> {
   const started = Date.now();
+  let quietPolls = 0;
+  let inFlight = -1;
+  // Quiescent means the WHOLE pipeline is drained: nothing left to normalize,
+  // nothing left to relay, and no case mid-flight. Checking only case states
+  // reports "settled" before the first case has even been created.
   while (Date.now() - started < maxMs) {
-    const rows = await db
-      .select({ id: recoveryCases.id })
-      .from(recoveryCases)
-      .where(inArray(recoveryCases.state, ['detected', 'diagnosed', 'planned', 'pending_policy', 'executing']));
-    if (rows.length === last) stable++;
-    else stable = 0;
-    last = rows.length;
-    if (stable >= 3) break;
-    process.stdout.write(`\r[replay] ${label}: ${rows.length} cases still in flight…   `);
-    await sleep(2000);
+    const [pending] = await db
+      .select({
+        inbox: dsql<number>`(select count(*) from webhook_inbox where processed_at is null)::int`,
+        outbox: dsql<number>`(select count(*) from outbox where processed_at is null)::int`,
+        transient: dsql<number>`(select count(*) from recovery_cases where state in ('detected','diagnosed','planned','pending_policy','executing'))::int`,
+      })
+      .from(dsql`(select 1) as _`);
+    inFlight = (pending?.inbox ?? 0) + (pending?.outbox ?? 0) + (pending?.transient ?? 0);
+    if (inFlight === 0) {
+      quietPolls++;
+      if (quietPolls >= 3) break; // stable across ~9s, not just a lull
+    } else {
+      quietPolls = 0;
+    }
+    process.stdout.write(`\r[replay] ${label}: ${inFlight} items in flight…   `);
+    await sleep(3000);
   }
-  console.log(`\n[replay] ${label}: settled (${last} in transient states)`);
+  console.log(`\n[replay] ${label}: settled`);
 }
 
 // ---- 1. failure webhooks --------------------------------------------------
