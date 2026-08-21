@@ -1,4 +1,4 @@
-import { Link, createFileRoute } from '@tanstack/react-router';
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { createColumnHelper, flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { Lock } from 'lucide-react';
@@ -17,7 +17,14 @@ const columns = [
     header: 'Customer',
     cell: (info) => (
       <div>
-        <div className="font-medium">{info.getValue()}</div>
+        <Link
+          to="/cases/$caseId"
+          params={{ caseId: info.row.original.id }}
+          className="font-medium hover:underline"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {info.getValue()}
+        </Link>
         <div className="text-xs text-muted">{info.row.original.customerEmail}</div>
       </div>
     ),
@@ -69,16 +76,26 @@ const columns = [
 
 const STATE_FILTERS = ['all', 'open', 'pending_approval', 'escalated', 'disputed', 'waiting', 'recovered', 'stopped', 'lost'] as const;
 
+/**
+ * Stable empty fallback. An inline `data = []` default creates a NEW array
+ * reference every render; while a freshly-keyed query is still loading,
+ * useReactTable sees perpetually-changing data and re-renders forever,
+ * freezing the tab. The fallback must be referentially stable.
+ */
+const EMPTY_ROWS: CaseListRow[] = [];
+
 function RiskQueue() {
+  const navigate = useNavigate();
   const [filter, setFilter] = useState<(typeof STATE_FILTERS)[number]>('open');
   const query =
     filter === 'all' ? '' : filter === 'open' ? '?open=true' : `?state=${filter}`;
-  const { data = [] } = useQuery({
+  const { data } = useQuery({
     queryKey: ['cases', filter],
     queryFn: () => api<CaseListRow[]>(`/recovery/cases${query}`),
   });
+  const rows = data ?? EMPTY_ROWS;
 
-  const table = useReactTable({ data, columns, getCoreRowModel: getCoreRowModel() });
+  const table = useReactTable({ data: rows, columns, getCoreRowModel: getCoreRowModel() });
 
   return (
     <div>
@@ -111,17 +128,19 @@ function RiskQueue() {
           </thead>
           <tbody>
             {table.getRowModel().rows.map((row) => (
-              <tr key={row.id} className="border-b border-border/50 last:border-0 hover:bg-surface">
+              <tr
+                key={row.id}
+                onClick={() => navigate({ to: '/cases/$caseId', params: { caseId: row.original.id } })}
+                className="cursor-pointer border-b border-border/50 last:border-0 hover:bg-surface"
+              >
                 {row.getVisibleCells().map((cell) => (
                   <td key={cell.id} className="px-3 py-2.5">
-                    <Link to="/cases/$caseId" params={{ caseId: row.original.id }} className="block">
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </Link>
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
                 ))}
               </tr>
             ))}
-            {data.length === 0 && (
+            {rows.length === 0 && (
               <tr>
                 <td colSpan={columns.length} className="px-3 py-10 text-center text-muted">
                   No cases match this filter.
