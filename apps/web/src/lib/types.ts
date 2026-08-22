@@ -77,7 +77,7 @@ export interface RecoveryReport {
  * with no action proposed at all — the human decides what to do.
  */
 export interface HumanQueueItem {
-  kind: 'approval' | 'escalation';
+  kind: 'approval' | 'escalation' | 'dispute';
   intervention: { id: string; actionType: string; params: unknown; rationale: string | null; confidence: string | null; createdAt: string; caseId: string } | null;
   caseRow: { id: string; exposurePaise: number; state: string; causeHypothesis: string | null; holdoutArm: 'treatment' | 'holdout' };
   customerName: string;

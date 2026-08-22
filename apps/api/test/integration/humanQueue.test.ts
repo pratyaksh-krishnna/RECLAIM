@@ -10,7 +10,7 @@ afterAll(async () => {
 });
 
 async function seedCase(
-  state: 'escalated' | 'pending_approval' | 'waiting' | 'recovered',
+  state: 'escalated' | 'pending_approval' | 'waiting' | 'recovered' | 'disputed',
   exposurePaise: number,
   overrides: Partial<typeof recoveryCases.$inferInsert> = {},
 ) {
@@ -118,5 +118,40 @@ describe('human queue — escalated cases reach the human approval area', () => 
     const queue = await humanQueue(db);
 
     expect(queue.filter((q) => q.caseRow.id === caseRow.id)).toHaveLength(1);
+  });
+});
+
+describe('human queue — disputed cases are human work too', () => {
+  it('surfaces a disputed case as a dispute work item with its reason and summary', async () => {
+    const { caseRow } = await seedCase('disputed', 249_900, { disputedAt: new Date('2026-08-20T00:00:00Z') });
+    await db.insert(auditEvents).values({
+      caseId: caseRow.id,
+      actorType: 'system',
+      eventType: 'case.transition',
+      payload: { from: 'waiting', to: 'disputed', reason: 'customer disputes the charge' },
+    });
+    await db.insert(auditEvents).values({
+      caseId: caseRow.id,
+      actorType: 'agent',
+      actorId: 'summarizer',
+      eventType: 'case.summary',
+      payload: { summary: 'Customer raised a chargeback with their bank.', citedEventIds: [] },
+    });
+
+    const queue = await humanQueue(db);
+    const item = queue.find((q) => q.caseRow.id === caseRow.id);
+
+    expect(item, 'a frozen dispute must be reachable by a human').toBeDefined();
+    expect(item!.kind).toBe('dispute');
+    expect(item!.escalationReason).toBe('customer disputes the charge');
+    expect(item!.summary).toContain('chargeback');
+  });
+
+  it('ranks disputes alongside escalations by exposure', async () => {
+    const { caseRow: bigDispute } = await seedCase('disputed', 8_000_000, { disputedAt: new Date() });
+    const { caseRow: smallEsc } = await seedCase('escalated', 5_000);
+
+    const ids = (await humanQueue(db)).map((q) => q.caseRow.id);
+    expect(ids.indexOf(bigDispute.id)).toBeLessThan(ids.indexOf(smallEsc.id));
   });
 });

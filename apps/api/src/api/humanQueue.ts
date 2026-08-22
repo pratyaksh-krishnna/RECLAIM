@@ -21,7 +21,7 @@ import { auditEvents, customers, interventions, recoveryCases } from '../db/sche
  * was already writing a summary "for a human escalation inbox" that nothing
  * read. Both kinds now land in one inbox, ranked by exposure.
  */
-export type HumanQueueKind = 'approval' | 'escalation';
+export type HumanQueueKind = 'approval' | 'escalation' | 'dispute';
 
 export interface HumanQueueItem {
   kind: HumanQueueKind;
@@ -36,18 +36,23 @@ export interface HumanQueueItem {
 }
 
 export async function humanQueue(db: Db): Promise<HumanQueueItem[]> {
-  // ---- escalations: case-scoped, no intervention exists ----
-  const escalatedRows = await db
+  // ---- case-scoped work: nothing was proposed, the case itself needs a human ----
+  // `escalated` is the pipeline giving up. `disputed` is a compliance freeze
+  // that, by design, only a human can lift — recovery_cases carries a
+  // dispute_resolved_by_user_id for exactly that. Both were invisible here
+  // before: a disputed case had no intervention and was not 'escalated', so it
+  // sat frozen and unreachable while the Summarizer wrote it a brief nobody read.
+  const caseRows = await db
     .select({ caseRow: recoveryCases, customerName: customers.name })
     .from(recoveryCases)
     .innerJoin(customers, eq(customers.id, recoveryCases.customerId))
-    .where(eq(recoveryCases.state, 'escalated'));
+    .where(inArray(recoveryCases.state, ['escalated', 'disputed']));
 
-  const escalatedIds = escalatedRows.map((r) => r.caseRow.id);
+  const caseIds = caseRows.map((r) => r.caseRow.id);
 
-  // one query for the audit trail of every escalated case, reduced in memory —
-  // avoids an N+1 as the escalation backlog grows
-  const trail = escalatedIds.length
+  // one query for the audit trail of every such case, reduced in memory —
+  // avoids an N+1 as the backlog grows
+  const trail = caseIds.length
     ? await db
         .select({
           caseId: auditEvents.caseId,
@@ -57,7 +62,7 @@ export async function humanQueue(db: Db): Promise<HumanQueueItem[]> {
         .from(auditEvents)
         .where(
           and(
-            inArray(auditEvents.caseId, escalatedIds),
+            inArray(auditEvents.caseId, caseIds),
             inArray(auditEvents.eventType, ['case.summary', 'case.transition']),
           ),
         )
@@ -72,13 +77,16 @@ export async function humanQueue(db: Db): Promise<HumanQueueItem[]> {
     // later rows overwrite earlier ones, so each map ends up holding the latest
     if (row.eventType === 'case.summary') {
       if (typeof payload.summary === 'string') summaries.set(row.caseId, payload.summary);
-    } else if (payload.to === 'escalated' && typeof payload.reason === 'string') {
+    } else if (
+      (payload.to === 'escalated' || payload.to === 'disputed') &&
+      typeof payload.reason === 'string'
+    ) {
       reasons.set(row.caseId, payload.reason);
     }
   }
 
-  const escalations: HumanQueueItem[] = escalatedRows.map((r) => ({
-    kind: 'escalation',
+  const caseWork: HumanQueueItem[] = caseRows.map((r) => ({
+    kind: r.caseRow.state === 'disputed' ? 'dispute' : 'escalation',
     caseRow: r.caseRow,
     customerName: r.customerName,
     intervention: null,
@@ -94,11 +102,11 @@ export async function humanQueue(db: Db): Promise<HumanQueueItem[]> {
     .innerJoin(customers, eq(customers.id, recoveryCases.customerId))
     .where(eq(interventions.status, 'pending_approval'));
 
-  const escalatedSet = new Set(escalatedIds);
+  const caseWorkSet = new Set(caseIds);
   const approvals: HumanQueueItem[] = approvalRows
-    // a stale proposal on an escalated case is not a separate decision —
-    // the escalation already represents that case in the queue
-    .filter((r) => !escalatedSet.has(r.caseRow.id))
+    // a stale proposal on an escalated/disputed case is not a separate
+    // decision — that case is already represented in the queue
+    .filter((r) => !caseWorkSet.has(r.caseRow.id))
     .map((r) => ({
       kind: 'approval',
       caseRow: r.caseRow,
@@ -108,5 +116,5 @@ export async function humanQueue(db: Db): Promise<HumanQueueItem[]> {
       escalationReason: null,
     }));
 
-  return [...escalations, ...approvals].sort((a, b) => b.caseRow.exposurePaise - a.caseRow.exposurePaise);
+  return [...caseWork, ...approvals].sort((a, b) => b.caseRow.exposurePaise - a.caseRow.exposurePaise);
 }

@@ -1,6 +1,6 @@
 import { Link, createFileRoute } from '@tanstack/react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Lock, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 import { ApiError, api, formatINR, getUser, timeAgo } from '../lib/api';
 import type { HumanQueueItem } from '../lib/types';
@@ -19,6 +19,8 @@ function Approvals() {
 
   const approvals = data.filter((d) => d.kind === 'approval');
   const escalations = data.filter((d) => d.kind === 'escalation');
+  const disputes = data.filter((d) => d.kind === 'dispute');
+  const isAdmin = getUser()?.role === 'admin';
 
   return (
     <div>
@@ -26,12 +28,27 @@ function Approvals() {
         <h1 className="text-xl font-bold tracking-tight">Human inbox</h1>
         {approvals.length > 0 && <Badge tone="amber">{approvals.length} awaiting approval</Badge>}
         {escalations.length > 0 && <Badge tone="red">{escalations.length} escalated to you</Badge>}
+        {disputes.length > 0 && <Badge tone="violet">{disputes.length} disputed — outreach frozen</Badge>}
       </div>
 
       {data.length === 0 && (
         <Card>
           <CardContent className="py-10 text-center text-muted">Nothing needs a human right now.</CardContent>
         </Card>
+      )}
+
+      {disputes.length > 0 && (
+        <section className="mb-6">
+          <h2 className="mb-2 flex items-center gap-1.5 text-sm font-semibold tracking-tight text-muted uppercase">
+            <Lock size={13} className="text-purple-700" />
+            Disputed — all outreach frozen until a human resolves it
+          </h2>
+          <div className="space-y-3">
+            {disputes.map((row) => (
+              <DisputeCard key={row.caseRow.id} row={row} isAdmin={isAdmin} />
+            ))}
+          </div>
+        </section>
       )}
 
       {escalations.length > 0 && (
@@ -102,6 +119,95 @@ function ApprovalCard({ row, canAct }: { row: HumanQueueItem; canAct: boolean })
           </div>
         )}
         <MutationError error={decide.error} />
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ---------------- dispute: a compliance freeze only a human lifts ---------------- */
+
+/**
+ * Resolving a dispute is the most sensitive control here: "rejected" resumes
+ * collection against someone who formally contested a charge. Admin-only,
+ * requires a written reason, and both outcomes are audited with the actor.
+ */
+function DisputeCard({ row, isAdmin }: { row: HumanQueueItem; isAdmin: boolean }) {
+  const qc = useQueryClient();
+  const [outcome, setOutcome] = useState<'upheld' | 'rejected' | null>(null);
+  const [reason, setReason] = useState('');
+
+  const submit = useMutation({
+    mutationFn: () =>
+      api(`/recovery/cases/${row.caseRow.id}/resolve-dispute`, {
+        method: 'POST',
+        body: JSON.stringify({ outcome, reason }),
+      }),
+    onSuccess: () => {
+      setOutcome(null);
+      setReason('');
+      void qc.invalidateQueries({ queryKey: ['approvals'] });
+      void qc.invalidateQueries({ queryKey: ['revenue-risk-nav'] });
+    },
+  });
+
+  return (
+    <Card className="border-purple-600/30">
+      <CardContent className="pt-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <CaseIdentity row={row} />
+          <div className="font-semibold tabular-nums">{formatINR(row.caseRow.exposurePaise)}</div>
+          <Badge tone="violet">
+            <Lock size={10} className="mr-1" />
+            outreach frozen
+          </Badge>
+          {row.escalationReason && <span className="text-sm text-muted">{row.escalationReason}</span>}
+          {isAdmin && !outcome && (
+            <div className="ml-auto flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => setOutcome('rejected')}>
+                Dispute rejected — resume recovery
+              </Button>
+              <Button variant="destructive" size="sm" onClick={() => setOutcome('upheld')}>
+                Dispute upheld — write it off
+              </Button>
+            </div>
+          )}
+          {!isAdmin && <span className="ml-auto text-xs text-muted">Only an admin can resolve a dispute.</span>}
+        </div>
+
+        {row.summary && (
+          <p className="mt-3 rounded-md border border-border bg-surface p-3 text-sm whitespace-pre-wrap">
+            {row.summary}
+          </p>
+        )}
+
+        {outcome && (
+          <div className="mt-3 space-y-2 rounded-md border border-border bg-surface p-3">
+            <p className="text-sm font-medium">
+              {outcome === 'rejected'
+                ? 'Resuming collection on a formally disputed charge. This is recorded against your account.'
+                : 'Closing this case as uncollectable. No further outreach.'}
+            </p>
+            <TextInput
+              value={reason}
+              onChange={setReason}
+              placeholder="Why? (recorded in the audit trail, min 10 characters)"
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant={outcome === 'rejected' ? 'default' : 'destructive'}
+                disabled={reason.trim().length < 10 || submit.isPending}
+                onClick={() => submit.mutate()}
+              >
+                Confirm — dispute {outcome}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setOutcome(null)}>
+                Cancel
+              </Button>
+            </div>
+            <MutationError error={submit.error} />
+          </div>
+        )}
       </CardContent>
     </Card>
   );

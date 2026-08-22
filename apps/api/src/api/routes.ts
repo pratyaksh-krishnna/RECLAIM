@@ -204,6 +204,86 @@ export function makeApiRouter(deps: ApiDeps): Router {
     }),
   );
 
+  /**
+   * Dispute resolution — the only way to lift a compliance freeze.
+   *
+   * recovery_cases.dispute_resolved_by_user_id existed from the start and was
+   * never written by anything: once disputed, a case was frozen forever
+   * (policy reads disputed_at, not state, so it survives every transition) and
+   * no code path could clear it. A human could stop the case or leave it stuck.
+   *
+   * ADMIN ONLY, and deliberately so. 'rejected' resumes collection against
+   * someone who formally contested a charge — the single most sensitive action
+   * in the system. No agent can reach this: it is HTTP-only, requires a typed
+   * outcome and a written reason, and both outcomes are audited with the actor.
+   */
+  const ResolveDisputeBody = z.object({
+    outcome: z.enum(['upheld', 'rejected']),
+    reason: z.string().min(10).max(1000),
+  });
+  router.post(
+    '/recovery/cases/:id/resolve-dispute',
+    requireRole('admin'),
+    asyncRoute(async (req, res) => {
+      const id = z.string().uuid().safeParse(req.params.id);
+      const body = ResolveDisputeBody.safeParse(req.body);
+      if (!id.success || !body.success) {
+        res.status(400).json({ error: 'invalid payload — outcome and a reason (min 10 chars) are required' });
+        return;
+      }
+      const actorId = (req as AuthedRequest).session?.sub ?? null;
+      const outcome = await db.transaction(async (tx) => {
+        const caseRow = await lockCase(tx, id.data);
+        if (!caseRow) return { status: 404 as const, error: 'case not found' };
+        if (caseRow.disputedAt === null) return { status: 409 as const, error: 'case has no open dispute' };
+
+        if (body.data.outcome === 'upheld') {
+          // the charge was wrong: stop collecting. The freeze stays on record —
+          // disputed_at is history, not a flag to be tidied away.
+          if (!isTerminal(caseRow.state)) {
+            await transitionCase(tx, caseRow, 'stopped', {
+              actorType: 'human',
+              actorId,
+              reason: `dispute upheld: ${body.data.reason}`,
+              extra: { stopReason: 'dispute', disputeResolvedByUserId: actorId },
+            });
+          }
+        } else {
+          // the dispute did not stand: clear the freeze so recovery may resume
+          await tx
+            .update(recoveryCases)
+            .set({ disputedAt: null, disputeResolvedByUserId: actorId })
+            .where(eq(recoveryCases.id, caseRow.id));
+          caseRow.disputedAt = null;
+          if (caseRow.state === 'disputed') {
+            await transitionCase(tx, caseRow, 're_evaluating', {
+              actorType: 'human',
+              actorId,
+              reason: `dispute rejected: ${body.data.reason}`,
+            });
+          }
+        }
+
+        await writeAudit(tx, {
+          caseId: id.data,
+          actorType: 'human',
+          actorId,
+          eventType: 'dispute.resolved',
+          payload: { outcome: body.data.outcome, reason: body.data.reason },
+        });
+        return { status: 200 as const, outcome: body.data.outcome };
+      });
+      if (outcome.status !== 200) {
+        res.status(outcome.status).json(outcome);
+        return;
+      }
+      if (outcome.outcome === 'rejected') {
+        await deps.orchestrator.enqueueCaseStep(id.data, 'dispute_resolved');
+      }
+      res.json({ ok: true, outcome: outcome.outcome });
+    }),
+  );
+
   const InterveneBody = z.object({ action: ActionParams });
   router.post(
     '/recovery/cases/:id/intervene',
