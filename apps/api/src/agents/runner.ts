@@ -223,6 +223,44 @@ function extractConfidence(agent: PromptAgent, parsed: unknown): number | null {
   return typeof c === 'number' ? c : agent === 'communication' || agent === 'summarizer' ? null : null;
 }
 
+/**
+ * Global suppression. Reached from a clean opt-out reply AND from one that was
+ * also flagged as an instruction attempt — the obligation to stop contacting a
+ * customer does not depend on how politely they asked.
+ */
+async function applyOptOut(tx: Tx, caseRow: CaseRow, now: () => Date): Promise<void> {
+  await tx.update(customers).set({ optedOut: true, optedOutAt: now() }).where(eq(customers.id, caseRow.customerId));
+  if (!isTerminal(caseRow.state)) {
+    await transitionCase(tx, caseRow, 'stopped', {
+      reason: 'customer opted out',
+      extra: { stopReason: 'opt_out' },
+    });
+  }
+  const event = CanonicalEvent.parse({
+    eventId: randomUUID(),
+    occurredAt: now().toISOString(),
+    sourceEventId: `optout:${caseRow.id}`,
+    type: 'recovery.stopped',
+    customerId: caseRow.customerId,
+    caseId: caseRow.id,
+    reason: 'opt_out',
+  });
+  await tx.insert(outbox).values({ eventType: event.type, payload: event });
+}
+
+/** Dispute freeze — likewise honoured regardless of the injection flag. */
+async function applyDisputeFreeze(
+  tx: Tx,
+  deps: AgentDeps,
+  caseRow: CaseRow,
+  afterCommit: (fn: () => Promise<void>) => void,
+): Promise<void> {
+  if (caseRow.state !== 'disputed') {
+    await transitionCase(tx, caseRow, 'disputed', { reason: 'customer disputes the charge' });
+  }
+  afterCommit(() => deps.enqueueAgent({ caseId: caseRow.id, agent: 'summarizer' }));
+}
+
 /** Walk legal FSM edges to reach 'planned' from wherever the case is. */
 async function toPlanned(tx: Tx, caseRow: CaseRow, reason: string): Promise<boolean> {
   if (caseRow.state === 'waiting' || caseRow.state === 'escalated') {
@@ -338,8 +376,17 @@ async function postProcess(
           caseId: caseRow.id,
           actorType: 'system',
           eventType: 'safety.injection_flagged',
-          payload: { communicationId: job.communicationId },
+          payload: { communicationId: job.communicationId, intent: out.intent },
         });
+        // A flagged reply is refused anything that would let the sender GAIN
+        // something: no paid_claim, no promise, no re-planning. Suppression is
+        // not a gain — honouring an opt-out or a dispute freeze only ever makes
+        // us contact the customer LESS, which is the safe direction even if the
+        // message really was hostile. Dropping a high-confidence opt-out because
+        // the same sentence also parsed as an instruction ("unsubscribe me") is
+        // a compliance failure, not a safety win.
+        if (out.intent === 'opt_out') return applyOptOut(tx, caseRow, now);
+        if (out.intent === 'dispute') return applyDisputeFreeze(tx, deps, caseRow, afterCommit);
         if (caseRow.state !== 'escalated') {
           await transitionCase(tx, caseRow, 'escalated', { reason: 'prompt-injection attempt in customer reply' });
         }
@@ -348,31 +395,10 @@ async function postProcess(
       }
 
       switch (out.intent) {
-        case 'opt_out': {
-          await tx.update(customers).set({ optedOut: true, optedOutAt: now() }).where(eq(customers.id, caseRow.customerId));
-          await transitionCase(tx, caseRow, 'stopped', {
-            reason: 'customer opted out',
-            extra: { stopReason: 'opt_out' },
-          });
-          const event = CanonicalEvent.parse({
-            eventId: randomUUID(),
-            occurredAt: now().toISOString(),
-            sourceEventId: `optout:${caseRow.id}`,
-            type: 'recovery.stopped',
-            customerId: caseRow.customerId,
-            caseId: caseRow.id,
-            reason: 'opt_out',
-          });
-          await tx.insert(outbox).values({ eventType: event.type, payload: event });
-          return;
-        }
-        case 'dispute': {
-          if (caseRow.state !== 'disputed') {
-            await transitionCase(tx, caseRow, 'disputed', { reason: 'customer disputes the charge' });
-          }
-          afterCommit(() => deps.enqueueAgent({ caseId: caseRow.id, agent: 'summarizer' }));
-          return;
-        }
+        case 'opt_out':
+          return applyOptOut(tx, caseRow, now);
+        case 'dispute':
+          return applyDisputeFreeze(tx, deps, caseRow, afterCommit);
         case 'promise_with_date': {
           const promisedDate = out.promise?.date ?? new Date(now().getTime() + 7 * 86_400_000).toISOString();
           const [created] = await tx
