@@ -119,6 +119,40 @@ export const DEFAULT_FREE_FILLS: Record<string, string> = {
 export class TemplateRenderError extends Error {}
 
 /**
+ * THE definition of what makes a set of free-slot fills acceptable. Both gates
+ * call this: the agent runner before an output is accepted, and renderTemplate
+ * at execution time.
+ *
+ * They used to disagree. The agent gate ran only the numeral/URL/currency lint,
+ * while the renderer additionally enforced maxLength and unknown-slot rules —
+ * so an over-long sign_off passed Zod, passed the lint, passed the POLICY gate,
+ * and then died inside the tool. The intervention failed permanently and the
+ * case landed in the human inbox with "free slot 'sign_off' exceeds max length
+ * 120" — an engineering error dressed up as a business decision, which is not
+ * something an operator can act on. Keeping one definition means a bad fill is
+ * caught while the model can still be asked to try again.
+ */
+export function validateFreeFills(skeleton: TemplateSkeleton, freeFills: Record<string, string>): string[] {
+  const problems: string[] = [];
+  const freeSlots = skeleton.slots.filter((s) => s.kind === 'free');
+  const freeSlotNames = new Set(freeSlots.map((s) => s.name));
+
+  for (const key of Object.keys(freeFills)) {
+    if (!freeSlotNames.has(key)) problems.push(`unknown free slot '${key}'`);
+  }
+  for (const slot of freeSlots) {
+    const value = freeFills[slot.name];
+    if (slot.maxLength && value !== undefined && value.length > slot.maxLength) {
+      problems.push(`free slot '${slot.name}' exceeds max length ${slot.maxLength} (got ${value.length})`);
+    }
+  }
+  for (const v of lintFreeSlotFills(freeFills)) {
+    problems.push(`free-slot lint ${v.slot}:${v.rule}(${v.match})`);
+  }
+  return problems;
+}
+
+/**
  * Render a skeleton. Free fills are linted; immutable values may only come
  * from the server-side caller. Unfilled placeholders are a hard error.
  */
@@ -130,20 +164,9 @@ export function renderTemplate(
   const freeSlotNames = new Set(skeleton.slots.filter((s) => s.kind === 'free').map((s) => s.name));
   const immutableSlotNames = new Set(skeleton.slots.filter((s) => s.kind === 'immutable').map((s) => s.name));
 
-  for (const key of Object.keys(freeFills)) {
-    if (!freeSlotNames.has(key)) throw new TemplateRenderError(`unknown free slot '${key}'`);
-  }
-  for (const slot of skeleton.slots) {
-    if (slot.kind === 'free' && slot.maxLength && (freeFills[slot.name]?.length ?? 0) > slot.maxLength) {
-      throw new TemplateRenderError(`free slot '${slot.name}' exceeds max length ${slot.maxLength}`);
-    }
-  }
-  const violations = lintFreeSlotFills(freeFills);
-  if (violations.length > 0) {
-    throw new TemplateRenderError(
-      `free-slot lint violations: ${violations.map((v) => `${v.slot}:${v.rule}(${v.match})`).join(', ')}`,
-    );
-  }
+  const problems = validateFreeFills(skeleton, freeFills);
+  if (problems.length > 0) throw new TemplateRenderError(problems.join('; '));
+
   for (const name of immutableSlotNames) {
     if (!(name in immutableValues)) throw new TemplateRenderError(`missing immutable slot value '${name}'`);
   }

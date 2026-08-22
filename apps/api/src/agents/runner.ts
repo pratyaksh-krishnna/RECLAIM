@@ -10,8 +10,9 @@ import {
   ReplyInterpretation,
   SummarizerOutput,
   TriageOutput,
-  lintFreeSlotFills,
+  type TemplateId,
 } from '@reclaim/shared';
+import { TEMPLATE_REGISTRY, validateFreeFills } from '../templates/registry.js';
 import type { Db, Tx } from '../db/client.js';
 import {
   agentDecisions,
@@ -38,8 +39,12 @@ export interface AgentDeps {
 interface AgentSpec<T> {
   schemaName: string;
   zod: z.ZodType<T>;
-  /** extra deterministic validation beyond the schema (e.g. the free-slot lint) */
-  extraValidate?: (output: T) => string | null;
+  /**
+   * Extra deterministic validation beyond the schema. Receives the agent's
+   * input too, because some rules depend on it — free-slot limits belong to
+   * the specific template the agent was asked to fill.
+   */
+  extraValidate?: (output: T, input: unknown) => string | null;
 }
 
 const SPECS = {
@@ -49,11 +54,15 @@ const SPECS = {
   communication: {
     schemaName: 'communication_output',
     zod: CommunicationOutput,
-    extraValidate: (o: CommunicationOutput) => {
-      const violations = lintFreeSlotFills(o.slotFills);
-      return violations.length > 0
-        ? `free-slot lint: ${violations.map((v) => `${v.slot}:${v.rule}`).join(', ')}`
-        : null;
+    extraValidate: (o: CommunicationOutput, input: unknown) => {
+      // Validate against the SAME rules renderTemplate enforces, so a bad fill
+      // is retried here rather than failing inside the tool after the policy
+      // gate has already approved the action.
+      const templateId = (input as { templateId?: TemplateId } | null)?.templateId;
+      const skeleton = templateId ? TEMPLATE_REGISTRY[templateId] : undefined;
+      if (!skeleton) return `unknown templateId '${String(templateId)}'`;
+      const problems = validateFreeFills(skeleton, o.slotFills);
+      return problems.length > 0 ? problems.join('; ') : null;
     },
   } as AgentSpec<CommunicationOutput>,
   reply_interpreter: {
@@ -107,7 +116,7 @@ export async function runAgentJob(
       failReason = `schema: ${candidate.error.issues[0]?.message ?? 'invalid'}`;
       continue;
     }
-    const extraError = spec.extraValidate ? spec.extraValidate(candidate.data as never) : null;
+    const extraError = spec.extraValidate ? spec.extraValidate(candidate.data as never, prep.input) : null;
     if (extraError) {
       failReason = extraError;
       continue;
@@ -193,13 +202,19 @@ async function buildAgentInput(
         )
         .orderBy(desc(interventions.createdAt))
         .limit(1);
-      const params = (proposal?.params ?? {}) as { templateId?: string; language?: string; toneRegister?: string };
+      const params = (proposal?.params ?? {}) as { templateId?: TemplateId; language?: string; toneRegister?: string };
+      const templateId = params.templateId ?? 'payment_reminder';
+      const skeleton = TEMPLATE_REGISTRY[templateId];
       return {
         ...context,
-        templateId: params.templateId ?? 'payment_reminder',
+        templateId,
         language: params.language ?? context.language,
         toneRegister: params.toneRegister ?? 'formal',
-        freeSlots: ['greeting', 'context_sentence', 'sign_off'],
+        // the agent was previously given bare slot NAMES, so it never knew the
+        // length budget it was being judged against and routinely blew it
+        freeSlots: skeleton.slots
+          .filter((s) => s.kind === 'free')
+          .map((s) => ({ name: s.name, maxLength: s.maxLength ?? null, description: s.description })),
       };
     }
     case 'strategy': {

@@ -38,7 +38,9 @@ For send_email, templateId MUST be exactly one of the approved registry ids — 
   communication: {
     system: `${COMMON_RULES}
 
-Role: Communication. Fill ONLY the free-text slots listed in the input for the given template, language and tone register. Free slots are greeting/context/sign-off style text. HARD BANS in your fills: any digit in any script, any URL or domain, any currency symbol or currency word, any HTML. Amounts, dates and links are injected by the server into separate immutable slots — never reference specific numbers.`,
+Role: Communication. Fill ONLY the free-text slots listed in the input for the given template, language and tone register. Free slots are greeting/context/sign-off style text. HARD BANS in your fills: any digit in any script, any URL or domain, any currency symbol or currency word, any HTML. Amounts, dates and links are injected by the server into separate immutable slots — never reference specific numbers.
+
+Each entry in freeSlots carries a maxLength in CHARACTERS. Every fill you produce MUST be at or under its slot's maxLength — count characters, including spaces and newlines, and keep a little headroom. Sign-offs and greetings are one short line, not a paragraph. Fill only the slot names given; inventing a slot name is an error.`,
   },
   reply_interpreter: {
     system: `${COMMON_RULES}

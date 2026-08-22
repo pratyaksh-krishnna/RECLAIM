@@ -6,7 +6,16 @@ import {
   TemplateRenderError,
   formatINR,
   renderTemplate,
+  validateFreeFills,
 } from '../../src/templates/registry.js';
+
+/** immutable values the payment_reminder skeleton needs to render at all */
+const IMMUTABLES_FOR_REMINDER = {
+  amount: formatINR(99_900),
+  invoice_number: 'INV-001',
+  due_date: '1 August 2026',
+  legal_footer: 'legal',
+};
 
 describe('template rendering', () => {
   const skeleton = TEMPLATE_REGISTRY['payment_link_delivery']!;
@@ -77,6 +86,63 @@ describe('templateId is a closed enum (agents cannot invent templates)', () => {
         slotFills: {},
       });
       expect(result.success).toBe(true);
+    }
+  });
+});
+
+describe('agent-time validation matches render-time validation', () => {
+  const skeleton = TEMPLATE_REGISTRY.payment_reminder;
+  const tooLong = 'x'.repeat(121); // sign_off maxLength is 120
+
+  it('rejects an over-long free fill BEFORE it reaches the tool', () => {
+    // the gap that stranded live cases: renderTemplate threw on maxLength but
+    // the agent-time gate never checked it, so the failure surfaced only at
+    // execution — after the policy gate had already approved the action
+    const problems = validateFreeFills(skeleton, { sign_off: tooLong });
+    expect(problems.join(' ')).toContain('exceeds max length');
+  });
+
+  it('rejects an invented slot at the agent gate too', () => {
+    const problems = validateFreeFills(skeleton, { made_up_slot: 'hello' });
+    expect(problems.join(' ')).toContain('unknown free slot');
+  });
+
+  it('still catches numerals/links/currency', () => {
+    expect(validateFreeFills(skeleton, { sign_off: 'Pay 500 now' }).join(' ')).toContain('numeral');
+    expect(validateFreeFills(skeleton, { sign_off: 'see example.com' }).join(' ')).toContain('url');
+  });
+
+  it('accepts a clean fill', () => {
+    expect(validateFreeFills(skeleton, { sign_off: 'Warm regards, the billing team' })).toEqual([]);
+  });
+
+  /**
+   * The invariant that was violated: anything the renderer rejects must be
+   * rejected at the agent gate, so a bad fill is retried and regenerated
+   * instead of stranding the case in 'escalated' with an engineering error.
+   */
+  it('never lets a render-time failure through the agent gate', () => {
+    const badFills: Array<Record<string, string>> = [
+      { sign_off: tooLong },
+      { greeting: 'x'.repeat(121) },
+      { context_sentence: 'x'.repeat(301) },
+      { made_up_slot: 'hello' },
+      { sign_off: 'Pay 500' },
+      { sign_off: 'visit example.com' },
+      { sign_off: 'costs ₹99' },
+    ];
+    for (const fills of badFills) {
+      let rendererRejected = false;
+      try {
+        renderTemplate(skeleton, IMMUTABLES_FOR_REMINDER, fills);
+      } catch {
+        rendererRejected = true;
+      }
+      expect(rendererRejected, `renderer should reject ${JSON.stringify(fills)}`).toBe(true);
+      expect(
+        validateFreeFills(skeleton, fills).length,
+        `agent gate MUST also reject ${JSON.stringify(fills)}`,
+      ).toBeGreaterThan(0);
     }
   });
 });
