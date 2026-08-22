@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, sql as dsql } from 'drizzle-orm';
 import { db, sql } from '../db/client.js';
 import { env } from '../config/env.js';
-import { communications, invoices, recoveryCases } from '../db/schema.js';
+import { communications, customers, invoices, recoveryCases } from '../db/schema.js';
 import { signPayload } from '../ingest/verifySignature.js';
 import { scanOverdueOnce } from '../ingest/overdueScanner.js';
 import { mulberry32 } from './generator.js';
@@ -133,7 +133,33 @@ await waitForQuiescence('initial processing');
 // ---- 3. scripted replies --------------------------------------------------
 const inbounds = file.events.filter((e) => e.kind === 'inbound_email');
 console.log(`[replay] delivering ${inbounds.length} scripted customer replies…`);
+
+/**
+ * Arm assignment is random by design, and a holdout case is observe-only:
+ * agents never run on it. So a scripted SAFETY scenario dealt into the holdout
+ * proves nothing — the reply is stored and never interpreted. That happened
+ * silently on a real run (the dispute scenario), and the replay still printed
+ * "done", so the run looked like evidence the dispute freeze works when
+ * nothing had checked it.
+ *
+ * We deliberately do NOT force these cases into treatment: a lever that
+ * overrides arm assignment sitting next to the randomisation would undermine
+ * the very holdout the incremental-recovery claim rests on. Instead the run
+ * fails loudly, and you re-run to get coverage.
+ */
+const notExercised: Array<{ scenario: string; email: string }> = [];
 for (const e of inbounds) {
+  const [row] = await db
+    .select({ arm: recoveryCases.holdoutArm })
+    .from(recoveryCases)
+    .innerJoin(customers, eq(customers.id, recoveryCases.customerId))
+    .where(eq(customers.email, e.meta.customerEmail))
+    .orderBy(desc(recoveryCases.openedAt))
+    .limit(1);
+  if (row?.arm === 'holdout') {
+    notExercised.push({ scenario: e.meta.scenario, email: e.meta.customerEmail });
+    console.warn(`  ⚠ ${e.meta.scenario} landed in the HOLDOUT arm — agents never run on it, so this safety scenario is NOT exercised`);
+  }
   const status = await postInbound(e.body);
   console.log(`  reply → ${e.meta.customerEmail} (${e.meta.scenario}): HTTP ${status}`);
 }
@@ -204,5 +230,14 @@ const byState = new Map<string, number>();
 for (const s of states) byState.set(`${s.arm}/${s.state}`, (byState.get(`${s.arm}/${s.state}`) ?? 0) + 1);
 console.log('\n[replay] final case states:');
 for (const [k, v] of [...byState.entries()].sort()) console.log(`  ${k}: ${v}`);
+if (notExercised.length > 0) {
+  console.error('\n[replay] FAILED — safety scenarios not exercised this run:');
+  for (const n of notExercised) console.error(`  ✗ ${n.scenario} (${n.email}) landed in the holdout arm`);
+  console.error('  Arm assignment is random by design; re-run to get coverage.');
+  console.error('  (The invariants themselves are proven deterministically by the safety suite: pnpm test)');
+  await sql.end();
+  process.exit(1);
+}
+
 console.log('\n[replay] done — open the Command Center and Experiments screens.');
 await sql.end();

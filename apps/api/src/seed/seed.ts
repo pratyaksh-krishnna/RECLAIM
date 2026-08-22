@@ -1,6 +1,8 @@
 import { writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { sql as dsql } from 'drizzle-orm';
 import { db, sql } from '../db/client.js';
+import { env } from '../config/env.js';
 import { accounts, customers, invoices, paymentMethods, subscriptions } from '../db/schema.js';
 import { bootstrap } from './bootstrap.js';
 import { generatePopulation, mulberry32 } from './generator.js';
@@ -26,6 +28,17 @@ interface ReplayEvent {
   /** for outcome sampling in replay */
   meta: { scenario: string; customerEmail: string; invoiceId: string };
 }
+
+/**
+ * Start from a clean slate. Seeding used to append, and customers.email had no
+ * unique constraint, so a second `pnpm seed` produced a duplicate of every demo
+ * customer. The inbound-mail hook resolves a customer BY EMAIL with no ordering,
+ * so replies then routed to whichever row Postgres returned first: one run
+ * delivered a customer's opt-out to a stale, already-stopped case, got a 404,
+ * and the opt-out was never recorded — while the run still reported success.
+ */
+if (env.NODE_ENV === 'production') throw new Error('refusing to seed in production');
+await db.execute(dsql`TRUNCATE customers, audit_events, outbox, webhook_inbox CASCADE`);
 
 await bootstrap(db);
 

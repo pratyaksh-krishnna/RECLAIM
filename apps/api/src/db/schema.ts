@@ -33,7 +33,13 @@ export const users = pgTable('users', {
 export const customers = pgTable('customers', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
-  email: text('email').notNull(),
+  /**
+   * Unique: the inbound-mail hook resolves a customer BY EMAIL. Without this,
+   * two rows could share an address and a reply routed to whichever Postgres
+   * happened to return first — a real run delivered a customer's opt-out to a
+   * stale, already-closed case and 404'd instead of suppressing them.
+   */
+  email: text('email').notNull().unique(),
   timezone: text('timezone').notNull().default('Asia/Kolkata'),
   preferredLanguage: text('preferred_language', { enum: ['en', 'hi', 'hinglish'] })
     .notNull()

@@ -15,6 +15,13 @@
       "when": 1787349773517,
       "tag": "0001_lumpy_the_anarchist",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1787409338431,
+      "tag": "0002_curious_thunderbolts",
+      "breakpoints": true
     }
   ]
 }
