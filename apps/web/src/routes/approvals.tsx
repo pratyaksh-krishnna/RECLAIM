@@ -206,7 +206,17 @@ const COMPOSABLE = [
 
 type ComposableType = (typeof COMPOSABLE)[number]['type'];
 
-const TEMPLATES = ['payment_failed_notice', 'payment_link_delivery', 'pre_debit_notice', 'payment_reminder'] as const;
+/**
+ * Only the templates `send_email` can actually render. `payment_link_delivery`
+ * needs a {{payment_link}} and `pre_debit_notice` needs {{customer_name}} +
+ * {{debit_date}} — immutable slots the send_email path never supplies, because
+ * those templates are the deterministic message halves of `create_payment_link`
+ * and `schedule_mandate_reexecution`, which inject those values themselves.
+ * Offering them here would let one click strand a case in `escalated` with
+ * "missing immutable slot value …" — an engineering error dressed as a
+ * decision, which is the exact thing the Human Inbox exists to stop showing.
+ */
+const TEMPLATES = ['payment_failed_notice', 'payment_reminder'] as const;
 
 function ActionComposer({ caseId, onDone }: { caseId: string; onDone: () => void }) {
   const [type, setType] = useState<ComposableType>('create_payment_link');

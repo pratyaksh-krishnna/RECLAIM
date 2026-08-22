@@ -9,6 +9,7 @@ import {
   customers,
   failureEvents,
   interventions,
+  invoices,
   recoveryCases,
 } from '../../src/db/schema.js';
 import { InProcessRuntime } from '../../src/runtime/inProcessRuntime.js';
@@ -377,7 +378,8 @@ describe('SAFETY 7: a flagged injection must not swallow a suppression request',
     // an attacker must never talk the system into believing it was paid
     const [caseAfter] = await db.select().from(recoveryCases).where(eq(recoveryCases.id, caseId));
     expect(caseAfter!.state).toBe('escalated');
-    const [inv] = await db.select().from(recoveryCases).where(eq(recoveryCases.id, caseId));
-    expect(inv!.state).not.toBe('recovered');
+    // the invoice itself must never be marked paid on the strength of a claim
+    const [inv] = await db.select().from(invoices).where(eq(invoices.id, caseAfter!.invoiceId));
+    expect(inv!.status).not.toBe('paid');
   });
 });

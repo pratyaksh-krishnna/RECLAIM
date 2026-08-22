@@ -305,6 +305,22 @@ export function makeApiRouter(deps: ApiDeps): Router {
         res.status(409).json({ error: 'case cannot be re-analyzed' });
         return;
       }
+      // Walk the case back to re_evaluating first, exactly as /intervene does.
+      // Without this the agent ran but nothing moved: diagnosis only transitions
+      // out of detected/re_evaluating, and advanceCase returns 'none' for an
+      // escalated case — so "Send back to agents" spent a real model call and
+      // left the case, the badge and the inbox card exactly as they were.
+      await db.transaction(async (tx) => {
+        const locked = await lockCase(tx, id.data);
+        if (!locked) return;
+        if (['waiting', 'escalated', 'disputed'].includes(locked.state)) {
+          await transitionCase(tx, locked, 're_evaluating', {
+            actorType: 'human',
+            actorId: (req as AuthedRequest).session?.sub ?? null,
+            reason: 'human requested re-analysis',
+          });
+        }
+      });
       await deps.orchestrator.enqueueAgent({ caseId: id.data, agent: caseRow.causeHypothesis ? 'diagnosis' : 'triage' });
       res.json({ ok: true });
     }),
