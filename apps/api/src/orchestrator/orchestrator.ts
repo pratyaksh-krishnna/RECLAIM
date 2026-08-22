@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import type { CanonicalEvent, PolicyDecisionResult } from '@reclaim/shared';
 import type { Db, Tx } from '../db/client.js';
 import {
@@ -201,6 +201,28 @@ export async function handleCanonicalEvent(db: Db, deps: OrchestratorDeps, event
   }
 }
 
+/**
+ * Dispatching an agent does NOT move the case, so `diagnosed` is not consumed
+ * by acting on it. Two case-steps arriving close together therefore both saw
+ * the same unchanged state and both dispatched strategy — the FOR UPDATE lock
+ * serialises the writes but cannot stop the second look from repeating the
+ * first's decision. That produced two proposals, two policy ALLOWs, and the
+ * same email sent to the customer twice ten seconds apart.
+ */
+async function hasOpenIntervention(tx: Tx, caseId: string): Promise<boolean> {
+  const [open] = await tx
+    .select({ id: interventions.id })
+    .from(interventions)
+    .where(
+      and(
+        eq(interventions.caseId, caseId),
+        inArray(interventions.status, ['proposed', 'pending_approval', 'approved', 'executing']),
+      ),
+    )
+    .limit(1);
+  return open !== undefined;
+}
+
 async function withOpenCaseForInvoice<T>(
   db: Db,
   invoiceId: string,
@@ -337,10 +359,14 @@ export async function advanceCase(db: Db, deps: OrchestratorDeps, caseId: string
         return { kind: 'agent' as const, agent: triageRun ? ('diagnosis' as const) : ('triage' as const) };
       }
       case 'diagnosed':
-        return { kind: 'agent' as const, agent: 'strategy' as const };
+        return (await hasOpenIntervention(tx, caseId))
+          ? { kind: 'none' as const }
+          : { kind: 'agent' as const, agent: 'strategy' as const };
       case 're_evaluating': {
         if (!caseRow.causeHypothesis) return { kind: 'agent' as const, agent: 'diagnosis' as const };
-        return { kind: 'agent' as const, agent: 'strategy' as const };
+        return (await hasOpenIntervention(tx, caseId))
+          ? { kind: 'none' as const }
+          : { kind: 'agent' as const, agent: 'strategy' as const };
       }
       case 'planned': {
         // policy gate: latest proposed intervention

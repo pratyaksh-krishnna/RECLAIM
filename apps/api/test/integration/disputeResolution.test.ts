@@ -78,6 +78,11 @@ const resolve = (caseId: string, role: 'admin' | 'operator' | 'viewer', body: un
 
 /** propose an email and ask the real policy engine for a verdict */
 async function policyVerdictForEmail(caseId: string) {
+  // a case may hold only one open intervention, so close any prior probe first
+  await db
+    .update(interventions)
+    .set({ status: 'cancelled' })
+    .where(eq(interventions.caseId, caseId));
   const [proposal] = await db
     .insert(interventions)
     .values({

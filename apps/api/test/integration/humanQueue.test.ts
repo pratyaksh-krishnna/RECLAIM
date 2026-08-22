@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, describe, expect, it } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { db, sql } from '../../src/db/client.js';
 import { auditEvents, interventions, recoveryCases } from '../../src/db/schema.js';
 import { humanQueue } from '../../src/api/humanQueue.js';
@@ -153,5 +154,43 @@ describe('human queue — disputed cases are human work too', () => {
 
     const ids = (await humanQueue(db)).map((q) => q.caseRow.id);
     expect(ids.indexOf(bigDispute.id)).toBeLessThan(ids.indexOf(smallEsc.id));
+  });
+});
+
+describe('a case may hold at most one open intervention', () => {
+  const openProposal = (caseId: string, status: 'proposed' | 'pending_approval' | 'approved' | 'executing') => ({
+    caseId,
+    actionType: 'send_email' as const,
+    params: { type: 'send_email' },
+    proposedBy: 'agent' as const,
+    status,
+    rationale: 'x',
+    stopConditions: ['paid'],
+  });
+
+  it('the database refuses a second open intervention (duplicate customer email)', async () => {
+    const { caseRow } = await seedCase('waiting', 99_900);
+    await db.insert(interventions).values(openProposal(caseRow.id, 'proposed'));
+
+    // this is exactly what a duplicated strategy dispatch used to do
+    await expect(
+      db.insert(interventions).values(openProposal(caseRow.id, 'proposed')),
+    ).rejects.toThrow(/interventions_one_open_per_case|duplicate key/i);
+  });
+
+  it('refuses a second open intervention across DIFFERENT open statuses', async () => {
+    const { caseRow } = await seedCase('waiting', 99_900);
+    await db.insert(interventions).values(openProposal(caseRow.id, 'approved'));
+    await expect(
+      db.insert(interventions).values(openProposal(caseRow.id, 'proposed')),
+    ).rejects.toThrow(/interventions_one_open_per_case|duplicate key/i);
+  });
+
+  it('allows a new intervention once the previous one is closed', async () => {
+    const { caseRow } = await seedCase('waiting', 99_900);
+    await db.insert(interventions).values(openProposal(caseRow.id, 'executing'));
+    // a case legitimately makes several attempts over its life, one at a time
+    await db.update(interventions).set({ status: 'executed' }).where(eq(interventions.caseId, caseRow.id));
+    await expect(db.insert(interventions).values(openProposal(caseRow.id, 'proposed'))).resolves.toBeDefined();
   });
 });

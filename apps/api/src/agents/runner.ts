@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { z } from 'zod';
 import {
@@ -326,6 +326,30 @@ async function postProcess(
     }
     case 'strategy': {
       const out = parsed as ProposedAction;
+      // A case may hold at most one open intervention. Two provider events
+      // arriving milliseconds apart used to enqueue strategy twice; both runs
+      // proposed, both passed the gate, and the customer got the same email
+      // twice. The partial unique index is the hard guarantee — this check
+      // just avoids losing a completed model call to a constraint violation.
+      const [alreadyOpen] = await tx
+        .select({ id: interventions.id })
+        .from(interventions)
+        .where(
+          and(
+            eq(interventions.caseId, caseRow.id),
+            inArray(interventions.status, ['proposed', 'pending_approval', 'approved', 'executing']),
+          ),
+        )
+        .limit(1);
+      if (alreadyOpen) {
+        await writeAudit(tx, {
+          caseId: caseRow.id,
+          actorType: 'system',
+          eventType: 'action.proposal_skipped',
+          payload: { reason: 'an intervention is already open for this case', existingInterventionId: alreadyOpen.id },
+        });
+        return;
+      }
       const [created] = await tx
         .insert(interventions)
         .values({
