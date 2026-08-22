@@ -1,8 +1,35 @@
+# dependencies
 node_modules/
+.pnpm-store/
+
+# build output
 dist/
-.env
-*.local
-.DS_Store
-coverage/
+build/
+*.tsbuildinfo
 .turbo/
+apps/web/.vite/
+
+# secrets — never commit a real key; .env.example is the tracked template
+.env
+.env.*
+!.env.example
+*.local
+
+# test / coverage
+coverage/
+.vitest/
+
+# generated demo data
 apps/api/seed-events.json
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+logs/
+
+# editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
