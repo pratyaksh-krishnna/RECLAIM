@@ -117,7 +117,14 @@ export function startWorkers(db: Db): Worker[] {
           return;
         case 'promise_check':
         case 'stuck_case_sweep':
-          await sweepCases(db, deps.orchestrator.enqueueCaseStep);
+          // the stall threshold is the same policy value advanceCase uses, so
+          // it stays tunable in Policy Studio rather than hard-coded here
+          await sweepCases(
+            db,
+            deps.orchestrator.enqueueCaseStep,
+            undefined,
+            (await getActivePolicy(db)).config.loopGuards.maxCaseAgeHoursWithoutProgress,
+          );
           return;
       }
     }, { connection: makeRedis(), concurrency: 1 }),

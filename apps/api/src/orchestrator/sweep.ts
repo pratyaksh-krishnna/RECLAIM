@@ -18,7 +18,8 @@ export async function sweepCases(
   db: Db,
   enqueueCaseStep: (caseId: string, trigger: string) => Promise<void>,
   now: () => Date = () => new Date(),
-): Promise<{ waitElapsed: number; lost: number; brokenPromises: number }> {
+  stalledAfterHours = 72,
+): Promise<{ waitElapsed: number; lost: number; brokenPromises: number; stalled: number }> {
   const nowDate = now();
   let waitElapsed = 0;
   let lost = 0;
@@ -83,5 +84,61 @@ export async function sweepCases(
     });
   }
 
-  return { waitElapsed, lost, brokenPromises };
+  const stalled = await sweepStalledCases(db, nowDate, stalledAfterHours);
+
+  return { waitElapsed, lost, brokenPromises, stalled };
+}
+
+/**
+ * The catch-all: any case that has simply stopped moving.
+ *
+ * Twice now a case has gone quiet in a state nothing was watching — first
+ * `escalated`, then `disputed` — and each was fixed by teaching one more
+ * reader about one more state. That only ever catches the states we thought
+ * of. A stalled case is indistinguishable from a healthy one that is patiently
+ * waiting, so nobody notices until the money is gone.
+ *
+ * `maxCaseAgeHoursWithoutProgress` already existed in policy config, but only
+ * advanceCase applied it — and advanceCase runs only when something enqueues a
+ * step for that case. A case nothing triggers is exactly the case that needs
+ * the check, so the guard could never fire for it. This applies the same
+ * threshold on a timer instead, and routes anything stuck to a human.
+ *
+ * Deliberately skipped: terminal states; `escalated`/`disputed`/
+ * `pending_approval`, which are already sitting in the human inbox and are not
+ * stalled but waited-upon; and `waiting` with a live timer, which is working
+ * as intended.
+ */
+async function sweepStalledCases(db: Db, nowDate: Date, stalledAfterHours: number): Promise<number> {
+  const cutoff = new Date(nowDate.getTime() - stalledAfterHours * 3_600_000);
+  const candidates = await db
+    .select({ id: recoveryCases.id, state: recoveryCases.state, waitUntil: recoveryCases.waitUntil })
+    .from(recoveryCases)
+    .where(
+      and(
+        notInArray(recoveryCases.state, [...TERMINAL_STATES, 'escalated', 'disputed', 'pending_approval']),
+        lt(recoveryCases.lastProgressAt, cutoff),
+      ),
+    );
+
+  let stalled = 0;
+  for (const c of candidates) {
+    // a waiting case with a deadline still ahead of it is not stuck
+    if (c.state === 'waiting' && c.waitUntil !== null && c.waitUntil > nowDate) continue;
+    await db.transaction(async (tx) => {
+      const caseRow = await lockCase(tx, c.id);
+      if (!caseRow || isTerminal(caseRow.state) || caseRow.state === 'escalated') return;
+      await writeAudit(tx, {
+        caseId: caseRow.id,
+        actorType: 'system',
+        eventType: 'case.stalled',
+        payload: { state: caseRow.state, lastProgressAt: caseRow.lastProgressAt.toISOString(), stalledAfterHours },
+      });
+      await transitionCase(tx, caseRow, 'escalated', {
+        reason: `stalled: no progress in ${stalledAfterHours}h (stuck in ${caseRow.state})`,
+      });
+      stalled++;
+    });
+  }
+  return stalled;
 }
