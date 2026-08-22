@@ -10,7 +10,7 @@ export const Route = createRootRoute({ component: RootLayout });
 const NAV = [
   { to: '/', label: 'Command Center' },
   { to: '/cases', label: 'Risk Queue' },
-  { to: '/approvals', label: 'Approvals' },
+  { to: '/approvals', label: 'Human Inbox' },
   { to: '/policies', label: 'Policy Studio' },
   { to: '/experiments', label: 'Experiments' },
 ] as const;
@@ -24,6 +24,9 @@ function RootLayout() {
     queryFn: () => api<RevenueRisk>('/analytics/revenue-risk'),
     enabled: authed,
   });
+  // the inbox holds both kinds of human work, so the badge must count both —
+  // counting only approvals hid escalated cases from the operator entirely
+  const awaitingHuman = (risk?.pendingApprovals ?? 0) + (risk?.escalated ?? 0);
 
   if (!authed && pathname !== '/login') {
     location.assign('/login');
@@ -52,8 +55,8 @@ function RootLayout() {
                   )}
                 >
                   {item.label}
-                  {item.to === '/approvals' && (risk?.pendingApprovals ?? 0) > 0 && (
-                    <span className="ml-1.5 rounded-full bg-warn px-1.5 text-xs font-semibold text-white">{risk?.pendingApprovals}</span>
+                  {item.to === '/approvals' && awaitingHuman > 0 && (
+                    <span className="ml-1.5 rounded-full bg-warn px-1.5 text-xs font-semibold text-white">{awaitingHuman}</span>
                   )}
                 </Link>
               ))}

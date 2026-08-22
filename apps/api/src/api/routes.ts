@@ -21,6 +21,7 @@ import { writeAudit } from '../audit/audit.js';
 import { interventionStats, recoveryReport, revenueRiskSummary } from '../analytics/queries.js';
 import { requireRole, signSession, verifyPassword, type AuthedRequest } from '../auth/auth.js';
 import { asyncRoute } from '../ingest/webhookRouter.js';
+import { humanQueue } from './humanQueue.js';
 import { lockCase, transitionCase } from '../orchestrator/caseService.js';
 import { isTerminal } from '../orchestrator/fsm.js';
 import type { OrchestratorDeps } from '../orchestrator/orchestrator.js';
@@ -309,19 +310,12 @@ export function makeApiRouter(deps: ApiDeps): Router {
     }),
   );
 
-  // ---- approvals inbox ----
+  // ---- human inbox: actions awaiting a yes/no AND cases handed to a human ----
   router.get(
     '/approvals',
     requireRole('viewer'),
     asyncRoute(async (_req: Request, res: Response) => {
-      const rows = await db
-        .select({ intervention: interventions, caseRow: recoveryCases, customerName: customers.name })
-        .from(interventions)
-        .innerJoin(recoveryCases, eq(recoveryCases.id, interventions.caseId))
-        .innerJoin(customers, eq(customers.id, recoveryCases.customerId))
-        .where(eq(interventions.status, 'pending_approval'))
-        .orderBy(desc(recoveryCases.exposurePaise));
-      res.json(rows);
+      res.json(await humanQueue(db));
     }),
   );
 

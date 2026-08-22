@@ -52,9 +52,9 @@ function CommandCenter() {
           to="/experiments"
         />
         <Stat
-          title="Pending approvals"
-          value={String(risk?.pendingApprovals ?? 0)}
-          sub={`${risk?.escalated ?? 0} escalated · ${risk?.disputed ?? 0} disputed`}
+          title="Awaiting a human"
+          value={String((risk?.pendingApprovals ?? 0) + (risk?.escalated ?? 0))}
+          sub={`${risk?.pendingApprovals ?? 0} to approve · ${risk?.escalated ?? 0} escalated · ${risk?.disputed ?? 0} disputed`}
           to="/approvals"
         />
       </div>
@@ -77,7 +77,7 @@ function CommandCenter() {
             <CardTitle>Needs attention</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
-            <Row label="Escalated to humans" value={String(risk?.escalated ?? 0)} to="/cases" />
+            <Row label="Escalated to humans" value={String(risk?.escalated ?? 0)} to="/approvals" />
             <Row label="Open disputes (all outreach frozen)" value={String(risk?.disputed ?? 0)} to="/cases" />
             <Row label="Awaiting approval" value={String(risk?.pendingApprovals ?? 0)} to="/approvals" />
           </CardContent>

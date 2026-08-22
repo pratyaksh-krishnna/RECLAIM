@@ -70,10 +70,19 @@ export interface RecoveryReport {
   incrementalRecoveredPaiseEstimate: number;
 }
 
-export interface ApprovalRow {
-  intervention: { id: string; actionType: string; params: unknown; rationale: string | null; confidence: string | null; createdAt: string; caseId: string };
-  caseRow: { id: string; exposurePaise: number; state: string; causeHypothesis: string | null };
+/**
+ * One item in the human inbox. Two shapes share it because two different
+ * things need a person: an `approval` is one proposed action awaiting a
+ * yes/no, while an `escalation` is a whole case the pipeline handed over
+ * with no action proposed at all — the human decides what to do.
+ */
+export interface HumanQueueItem {
+  kind: 'approval' | 'escalation';
+  intervention: { id: string; actionType: string; params: unknown; rationale: string | null; confidence: string | null; createdAt: string; caseId: string } | null;
+  caseRow: { id: string; exposurePaise: number; state: string; causeHypothesis: string | null; holdoutArm: 'treatment' | 'holdout' };
   customerName: string;
+  summary: string | null;
+  escalationReason: string | null;
 }
 
 export interface PolicyVersionRow {
