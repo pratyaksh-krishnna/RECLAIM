@@ -109,7 +109,7 @@ holdout says Y would have arrived anyway, incremental = X − Y* with a 95% CI.
 | **Command Center** `/` | open revenue at risk, recovery vs. holdout, what needs a human |
 | **Risk Queue** `/cases` | every case ranked by exposure; holdout cases badged and action-locked |
 | **Case View** `/cases/:id` | diagnosis with cited evidence, full policy rule trace, message preview with locked slots |
-| **Human Inbox** `/approvals` | the two things that need a person: actions awaiting approval, and escalated cases where the pipeline stopped and you decide what to do |
+| **Human Inbox** `/approvals` | the three things that need a person: actions awaiting approval, escalated cases where the pipeline stopped, and disputes whose freeze only an admin can lift |
 | **Policy Studio** `/policies` | versioned money-control rules with diff history |
 | **Experiments** `/experiments` | incremental recovery vs. the randomized holdout, with a 95% CI |
 
@@ -126,7 +126,7 @@ holdout says Y would have arrived anyway, incremental = X − Y* with a 95% CI.
 ## Verification
 
 ```bash
-pnpm test        # 95 tests: policy engine, FSM, idempotency, ingestion, human inbox, e2e pipeline, safety suite
+pnpm test        # 121 tests: policy engine, FSM, idempotency, ingestion, human inbox, dispute resolution, stall alarm, e2e pipeline, safety suite
 pnpm typecheck
 pnpm lint
 ```
