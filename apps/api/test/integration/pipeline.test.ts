@@ -191,10 +191,10 @@ describe('end-to-end pipeline (stub LLM, sandbox provider)', () => {
 });
 
 describe('inbound replies (stub interpreter)', () => {
-  async function caseInWaiting(rt: InProcessRuntime) {
+  async function caseInWaiting(rt: InProcessRuntime, amountPaise = 99_900) {
     const c = await seedCustomer(db);
-    const inv = await seedInvoice(db, c.id);
-    await ingestFailure(rt, inv.id, c.id, 'insufficient_funds');
+    const inv = await seedInvoice(db, c.id, { amountDuePaise: amountPaise });
+    await ingestFailure(rt, inv.id, c.id, 'insufficient_funds', 'card', amountPaise);
     const [caseRow] = await db.select().from(recoveryCases).where(eq(recoveryCases.invoiceId, inv.id));
     expect(caseRow!.state).toBe('waiting');
     return { customer: c, invoice: inv, caseRow: caseRow! };
@@ -258,7 +258,10 @@ describe('inbound replies (stub interpreter)', () => {
   it('a promise-to-pay waits for an operator, then starts the clock once approved', async () => {
     const sent: Array<{ to: string; subject: string; body: string }> = [];
     const rt = makeRuntime(sent);
-    const { customer, caseRow } = await caseInWaiting(rt);
+    // ₹3,000 — above the promise ask-a-human threshold (₹2,000) but below the
+    // autonomous amount cap (₹5,000), so the case reaches 'waiting' normally
+    // and it is the PROMISE that needs approval, not the payment link
+    const { customer, caseRow } = await caseInWaiting(rt, 300_000);
 
     await reply(rt, caseRow.id, customer.id, 'Salary comes at month end, I will pay by Friday for sure.');
 
@@ -295,7 +298,7 @@ describe('inbound replies (stub interpreter)', () => {
   it('a promise that passes unpaid is marked broken and re-opens the case', async () => {
     const sent: Array<{ to: string; subject: string; body: string }> = [];
     const rt = makeRuntime(sent);
-    const { customer, caseRow } = await caseInWaiting(rt);
+    const { customer, caseRow } = await caseInWaiting(rt, 300_000);
     await reply(rt, caseRow.id, customer.id, 'Salary comes at month end, I will pay by Friday for sure.');
 
     const [proposal] = await db

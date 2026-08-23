@@ -65,6 +65,16 @@ export const PolicyConfig = z.object({
   /** hours of advance notice required before any UPI AutoPay / e-mandate re-execution */
   preDebitNoticeHours: z.number().positive(),
   confidenceGate: z.object({ minConfidence: Confidence, exposureThresholdPaise: Paise }),
+  /**
+   * paise; a promise to pay that an agent read out of a customer's reply is
+   * accepted automatically at or below this exposure, and needs a human above
+   * it. Accepting one pauses collection until the promised date, so the cost of
+   * being wrong scales with the amount at stake.
+   *
+   * Defaulted, so policy rows written before this rule existed still parse —
+   * the engine parses the stored config strictly on every evaluation.
+   */
+  promiseApprovalThresholdPaise: Paise.default(200_000),
   loopGuards: z.object({ maxAgentInvocationsPerCase: z.number().int().positive(), maxCaseAgeHoursWithoutProgress: z.number().positive() }),
 });
 export type PolicyConfig = z.infer<typeof PolicyConfig>;

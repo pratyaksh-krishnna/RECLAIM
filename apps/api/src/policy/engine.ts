@@ -208,17 +208,22 @@ const RULES: Rule[] = [
     id: 'promise_requires_approval',
     category: 'confidence_gate',
     description: 'a promise-to-pay extracted from a customer reply needs a human to accept it',
-    evaluate: (req) => {
+    evaluate: (req, cfg) => {
       if (req.action.type !== 'record_promise_to_pay' || req.proposedBy !== 'agent') {
         return { outcome: 'skipped' };
       }
       // Accepting a promise pauses collection until the promised date — the
-      // agent read that date out of free text the customer wrote, so a human
-      // confirms it before the clock starts. A human proposing one directly
-      // has already made that call and is not asked to approve themselves.
+      // agent read that date out of free text the customer wrote. Above the
+      // threshold a human confirms it before the clock starts; below it, the
+      // pause is cheaper than the friction of asking. A human proposing one
+      // directly has already made that call and is not asked to approve
+      // themselves.
+      if (req.amountDue <= cfg.promiseApprovalThresholdPaise) {
+        return { outcome: 'pass', detail: `exposure ${req.amountDue} at or below the ask-a-human threshold` };
+      }
       return {
         outcome: 'require_approval',
-        detail: `agent read a promise to pay by ${req.action.promisedDate} from the customer's reply`,
+        detail: `agent read a promise to pay by ${req.action.promisedDate} from the customer's reply, exposure ${req.amountDue}`,
       };
     },
   },

@@ -13,5 +13,6 @@ export const DEFAULT_POLICY_CONFIG: PolicyConfig = {
   afaThresholdPaise: 1_500_000, // ₹15,000 — e-mandate AFA line
   preDebitNoticeHours: 24,
   confidenceGate: { minConfidence: 0.6, exposureThresholdPaise: 1_000_000 }, // ₹10,000
+  promiseApprovalThresholdPaise: 200_000, // ₹2,000 — below this a promise is auto-accepted
   loopGuards: { maxAgentInvocationsPerCase: 12, maxCaseAgeHoursWithoutProgress: 96 },
 };

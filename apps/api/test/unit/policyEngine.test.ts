@@ -148,16 +148,39 @@ describe('policy engine — budgets, financial limits, confidence, loops', () =>
 });
 
 describe('policy — a promise to pay is accepted by a human, not by the agent', () => {
-  const promise = (proposedBy: 'agent' | 'human') =>
+  const promise = (proposedBy: 'agent' | 'human', amountDue = 999_900) =>
     baseRequest({
       action: { type: 'record_promise_to_pay', promisedDate: '2026-09-01T00:00:00.000Z', amountReference: 'the full amount' },
       proposedBy,
+      amountDue,
     });
 
   it('requires approval when the agent read the promise out of a customer reply', () => {
     const v = evaluatePolicyRequest(promise('agent'), DEFAULT_POLICY_CONFIG, 1);
     expect(v.verdict).toBe('REQUIRE_APPROVAL');
     expect(v.reason).toContain('promise');
+  });
+
+  it('auto-accepts a small-exposure promise rather than bothering an operator', () => {
+    // ₹500, below the ₹2,000 default — pausing collection here is cheap
+    const v = evaluatePolicyRequest(promise('agent', 50_000), DEFAULT_POLICY_CONFIG, 1);
+    expect(v.verdict).toBe('ALLOW');
+  });
+
+  it('asks a human right above the threshold', () => {
+    const cap = DEFAULT_POLICY_CONFIG.promiseApprovalThresholdPaise;
+    expect(evaluatePolicyRequest(promise('agent', cap), DEFAULT_POLICY_CONFIG, 1).verdict).toBe('ALLOW');
+    expect(evaluatePolicyRequest(promise('agent', cap + 1), DEFAULT_POLICY_CONFIG, 1).verdict).toBe('REQUIRE_APPROVAL');
+  });
+
+  it('a stored policy written before this rule existed still parses', () => {
+    // the engine strictly parses the config on every evaluation, so an older
+    // row without the new field must not throw
+    const legacy = { ...DEFAULT_POLICY_CONFIG } as Record<string, unknown>;
+    delete legacy['promiseApprovalThresholdPaise'];
+    expect(() =>
+      evaluatePolicyRequest(promise('agent', 50_000), legacy as typeof DEFAULT_POLICY_CONFIG, 1),
+    ).not.toThrow();
   });
 
   it('does not ask a human to approve their own promise', () => {
