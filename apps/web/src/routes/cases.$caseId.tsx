@@ -116,6 +116,8 @@ function CaseView() {
         </Card>
       )}
 
+      {data.promises.length > 0 && <PromiseTracker promises={data.promises} />}
+
       {/* policy verdicts */}
       <Card>
         <CardHeader><CardTitle>Policy verdicts</CardTitle></CardHeader>
@@ -289,5 +291,58 @@ function Timeline({ data }: { data: CaseDetail }) {
         </li>
       ))}
     </ol>
+  );
+}
+
+/**
+ * Promise-to-pay tracker. A promise pauses collection until the promised date,
+ * so the operator who accepted it needs to see the clock they started: when it
+ * is due, how long is left, and whether it was kept or broken. The hourly sweep
+ * flips an unkept promise to `broken` once the date passes with the invoice
+ * still unpaid, which re-opens the case for follow-up.
+ */
+function PromiseTracker({ promises }: { promises: CaseDetail['promises'] }) {
+  const day = 86_400_000;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Promise to pay</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {[...promises]
+          .sort((a, b) => +new Date(b.promisedDate) - +new Date(a.promisedDate))
+          .map((p) => {
+            const due = new Date(p.promisedDate);
+            const daysLeft = Math.ceil((due.getTime() - Date.now()) / day);
+            const tone = p.status === 'kept' ? 'green' : p.status === 'broken' ? 'red' : 'amber';
+            return (
+              <div key={p.id} className="rounded-md border border-border p-3 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={tone}>{p.status}</Badge>
+                  <span className="font-medium">
+                    due {due.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                  </span>
+                  {p.status === 'open' && (
+                    <span className={cn('tabular-nums', daysLeft < 0 ? 'text-bad' : 'text-muted')}>
+                      {daysLeft < 0
+                        ? `overdue by ${Math.abs(daysLeft)} day${Math.abs(daysLeft) === 1 ? '' : 's'}`
+                        : daysLeft === 0
+                          ? 'due today'
+                          : `${daysLeft} day${daysLeft === 1 ? '' : 's'} remaining`}
+                    </span>
+                  )}
+                  {p.amountReference && <span className="text-muted">— {p.amountReference}</span>}
+                </div>
+                {p.status === 'open' && (
+                  <p className="mt-1 text-xs text-muted">
+                    Collection is paused until this date. If the invoice is still unpaid then, the promise is
+                    marked broken and the case re-opens for follow-up.
+                  </p>
+                )}
+              </div>
+            );
+          })}
+      </CardContent>
+    </Card>
   );
 }

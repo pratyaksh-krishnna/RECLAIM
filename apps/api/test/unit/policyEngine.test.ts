@@ -146,3 +146,27 @@ describe('policy engine — budgets, financial limits, confidence, loops', () =>
     expect(r.ruleTrace.every((t) => ['pass', 'deny', 'require_approval', 'skipped'].includes(t.outcome))).toBe(true);
   });
 });
+
+describe('policy — a promise to pay is accepted by a human, not by the agent', () => {
+  const promise = (proposedBy: 'agent' | 'human') =>
+    baseRequest({
+      action: { type: 'record_promise_to_pay', promisedDate: '2026-09-01T00:00:00.000Z', amountReference: 'the full amount' },
+      proposedBy,
+    });
+
+  it('requires approval when the agent read the promise out of a customer reply', () => {
+    const v = evaluatePolicyRequest(promise('agent'), DEFAULT_POLICY_CONFIG, 1);
+    expect(v.verdict).toBe('REQUIRE_APPROVAL');
+    expect(v.reason).toContain('promise');
+  });
+
+  it('does not ask a human to approve their own promise', () => {
+    const v = evaluatePolicyRequest(promise('human'), DEFAULT_POLICY_CONFIG, 1);
+    expect(v.verdict).toBe('ALLOW');
+  });
+
+  it('still records the rule in the trace either way', () => {
+    const trace = evaluatePolicyRequest(promise('human'), DEFAULT_POLICY_CONFIG, 1).ruleTrace;
+    expect(trace.find((t) => t.ruleId === 'promise_requires_approval')?.outcome).toBe('skipped');
+  });
+});

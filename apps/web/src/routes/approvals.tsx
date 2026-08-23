@@ -105,6 +105,7 @@ function ApprovalCard({ row, canAct }: { row: HumanQueueItem; canAct: boolean })
         <CaseIdentity row={row} />
         <div className="font-semibold tabular-nums">{formatINR(row.caseRow.exposurePaise)}</div>
         <code className="rounded bg-black/5 px-1.5 py-0.5 text-xs">{iv.actionType}</code>
+        <PromiseDetail actionType={iv.actionType} params={iv.params} />
         {iv.confidence && <Badge tone="blue">{Math.round(Number(iv.confidence) * 100)}% conf</Badge>}
         <span className="max-w-md text-sm text-muted">{iv.rationale}</span>
         <span className="text-xs text-muted">{timeAgo(iv.createdAt)}</span>
@@ -504,4 +505,24 @@ function MutationError({ error }: { error: unknown }) {
   if (!error) return null;
   const message = error instanceof ApiError ? `${error.status}: ${error.message}` : String(error);
   return <p className="mt-2 text-xs text-bad">{message}</p>;
+}
+
+/**
+ * Accepting a promise pauses collection until the promised date, so the
+ * operator must see the date and how far out it is before saying yes — the
+ * agent read it out of free text the customer wrote.
+ */
+function PromiseDetail({ actionType, params }: { actionType: string; params: unknown }) {
+  if (actionType !== 'record_promise_to_pay') return null;
+  const p = params as { promisedDate?: string; amountReference?: string | null };
+  if (!p?.promisedDate) return null;
+  const due = new Date(p.promisedDate);
+  const daysOut = Math.ceil((due.getTime() - Date.now()) / 86_400_000);
+  return (
+    <Badge tone="amber">
+      pauses collection until {due.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+      {daysOut > 0 ? ` (${daysOut}d)` : ''}
+      {p.amountReference ? ` — ${p.amountReference}` : ''}
+    </Badge>
+  );
 }

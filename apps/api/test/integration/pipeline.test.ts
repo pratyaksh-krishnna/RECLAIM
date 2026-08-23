@@ -13,6 +13,7 @@ import {
   policyDecisions,
   recoveryCases,
   recoveryLedger,
+  promisesToPay,
 } from '../../src/db/schema.js';
 import { InProcessRuntime } from '../../src/runtime/inProcessRuntime.js';
 import { classifyDeclineCode } from '../../src/domain/declineTable.js';
@@ -20,6 +21,8 @@ import { FakeLlmClient } from '../helpers/fakeLlm.js';
 import { SandboxPaymentProvider } from '../../src/payments/sandboxAdapter.js';
 import { ensureSeedPolicy } from '../../src/policy/service.js';
 import { runAgentJob } from '../../src/agents/runner.js';
+import { lockCase, transitionCase } from '../../src/orchestrator/caseService.js';
+import { sweepCases } from '../../src/orchestrator/sweep.js';
 import { seedCustomer, seedInvoice, seedSubscription } from '../helpers/fixtures.js';
 
 const NOON_IST = () => new Date('2026-08-21T06:30:00.000Z');
@@ -252,20 +255,70 @@ describe('inbound replies (stub interpreter)', () => {
     expect(interventionsAfter.length).toBe(interventionsBefore.length); // no new action proposed, nothing outside catalog
   });
 
-  it('promise-with-date reply records a promise through the policy gate', async () => {
+  it('a promise-to-pay waits for an operator, then starts the clock once approved', async () => {
     const sent: Array<{ to: string; subject: string; body: string }> = [];
     const rt = makeRuntime(sent);
     const { customer, caseRow } = await caseInWaiting(rt);
 
     await reply(rt, caseRow.id, customer.id, 'Salary comes at month end, I will pay by Friday for sure.');
 
-    const rows = await db
+    // the agent read a date out of free text the customer wrote, so it proposes
+    // and stops — accepting a promise pauses collection, which is a human call
+    const [proposal] = await db
       .select()
       .from(interventions)
       .where(and(eq(interventions.caseId, caseRow.id), eq(interventions.actionType, 'record_promise_to_pay')));
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.status).toBe('executed');
+    expect(proposal!.status).toBe('pending_approval');
+    const [pending] = await db.select().from(recoveryCases).where(eq(recoveryCases.id, caseRow.id));
+    expect(pending!.state).toBe('pending_approval');
+    // nothing is tracked and no clock runs until a human says yes
+    expect(await db.select().from(promisesToPay).where(eq(promisesToPay.caseId, caseRow.id))).toHaveLength(0);
+
+    // operator approves — the same steps POST /approve performs
+    await db.transaction(async (tx) => {
+      await tx.update(interventions).set({ status: 'approved' }).where(eq(interventions.id, proposal!.id));
+      const locked = await lockCase(tx, caseRow.id);
+      await transitionCase(tx, locked!, 'executing', { actorType: 'human', reason: 'approved' });
+    });
+    await rt.orchestratorDeps.enqueueTool({ caseId: caseRow.id, interventionId: proposal!.id, attempt: 1 });
+    await rt.drain();
+
+    const [promise] = await db.select().from(promisesToPay).where(eq(promisesToPay.caseId, caseRow.id));
+    expect(promise, 'approving the promise must start the tracker').toBeDefined();
+    expect(promise!.status).toBe('open');
     const [after] = await db.select().from(recoveryCases).where(eq(recoveryCases.id, caseRow.id));
     expect(after!.state).toBe('waiting');
+    // collection is paused until after the promised date
+    expect(after!.waitUntil!.getTime()).toBeGreaterThanOrEqual(promise!.promisedDate.getTime());
+  });
+
+  it('a promise that passes unpaid is marked broken and re-opens the case', async () => {
+    const sent: Array<{ to: string; subject: string; body: string }> = [];
+    const rt = makeRuntime(sent);
+    const { customer, caseRow } = await caseInWaiting(rt);
+    await reply(rt, caseRow.id, customer.id, 'Salary comes at month end, I will pay by Friday for sure.');
+
+    const [proposal] = await db
+      .select()
+      .from(interventions)
+      .where(and(eq(interventions.caseId, caseRow.id), eq(interventions.actionType, 'record_promise_to_pay')));
+    await db.transaction(async (tx) => {
+      await tx.update(interventions).set({ status: 'approved' }).where(eq(interventions.id, proposal!.id));
+      const locked = await lockCase(tx, caseRow.id);
+      await transitionCase(tx, locked!, 'executing', { actorType: 'human', reason: 'approved' });
+    });
+    await rt.orchestratorDeps.enqueueTool({ caseId: caseRow.id, interventionId: proposal!.id, attempt: 1 });
+    await rt.drain();
+
+    const [promise] = await db.select().from(promisesToPay).where(eq(promisesToPay.caseId, caseRow.id));
+    // the promised date arrives and the invoice is still unpaid
+    const afterDue = () => new Date(promise!.promisedDate.getTime() + 2 * 86_400_000);
+    await sweepCases(db, rt.orchestratorDeps.enqueueCaseStep, afterDue);
+    await rt.drain();
+
+    const [p2] = await db.select().from(promisesToPay).where(eq(promisesToPay.id, promise!.id));
+    expect(p2!.status, 'an unkept promise must be marked broken').toBe('broken');
+    const [c2] = await db.select().from(recoveryCases).where(eq(recoveryCases.id, caseRow.id));
+    expect(c2!.state, 'the case must re-open for follow-up, not sit in waiting').not.toBe('waiting');
   });
 });
