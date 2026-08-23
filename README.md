@@ -6,7 +6,7 @@
 
 All agent reasoning is a **real Anthropic API call** (`claude-haiku-4-5`). There is no stub, mock, or heuristic fallback in `src/` — `ANTHROPIC_API_KEY` is required to boot. Payments remain mocked by default (`PAYMENTS_MODE=sandbox`).
 
-See [PLAN.md](./PLAN.md) for the architecture recap.
+See [FLOW.md](./FLOW.md) for how a case moves through the system end to end, and [PLAN.md](./PLAN.md) for the architecture recap.
 
 ## Getting started
 
