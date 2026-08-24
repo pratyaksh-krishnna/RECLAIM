@@ -4,7 +4,20 @@ import { AlertTriangle, Lock, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 import { ApiError, api, formatINR, getUser, timeAgo } from '../lib/api';
 import type { HumanQueueItem } from '../lib/types';
-import { Badge, Button, CAUSE_LABELS, Card, CardContent } from '../components/ui/primitives';
+import {
+  Badge,
+  Button,
+  CAUSE_LABELS,
+  Card,
+  CardContent,
+  Chip,
+  Empty,
+  Eyebrow,
+  Meter,
+  Note,
+  PageHeader,
+} from '../components/ui/primitives';
+import { cn } from '../lib/cn';
 
 export const Route = createFileRoute('/approvals')({ component: Approvals });
 
@@ -22,63 +35,100 @@ function Approvals() {
   const disputes = data.filter((d) => d.kind === 'dispute');
   const isAdmin = getUser()?.role === 'admin';
 
+  const atStake = data.reduce((sum, d) => sum + d.caseRow.exposurePaise, 0);
+
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-bold tracking-tight">Human inbox</h1>
-        {approvals.length > 0 && <Badge tone="amber">{approvals.length} awaiting approval</Badge>}
-        {escalations.length > 0 && <Badge tone="red">{escalations.length} escalated to you</Badge>}
-        {disputes.length > 0 && <Badge tone="violet">{disputes.length} disputed — outreach frozen</Badge>}
-      </div>
+      <PageHeader
+        title="Human Inbox"
+        lede={
+          data.length === 0
+            ? 'Everything the system can decide on its own, it already has.'
+            : 'Each item below is stopped until you decide. Nothing moves in the meantime.'
+        }
+      >
+        {data.length > 0 && (
+          <span className="flex items-center gap-2.5">
+            <Eyebrow>Held up</Eyebrow>
+            <span className="wide tnum text-sm font-semibold text-brass">{formatINR(atStake)}</span>
+          </span>
+        )}
+      </PageHeader>
 
       {data.length === 0 && (
         <Card>
-          <CardContent className="py-10 text-center text-muted">Nothing needs a human right now.</CardContent>
+          <Empty
+            title="Nothing needs a person right now."
+            hint="Proposals under the policy exposure limit are approved automatically. Anything above it, or anything the pipeline cannot resolve, will appear here."
+          />
         </Card>
       )}
 
       {disputes.length > 0 && (
-        <section className="mb-6">
-          <h2 className="mb-2 flex items-center gap-1.5 text-sm font-semibold tracking-tight text-muted uppercase">
-            <Lock size={13} className="text-purple-700" />
-            Disputed — all outreach frozen until a human resolves it
-          </h2>
-          <div className="space-y-3">
-            {disputes.map((row) => (
-              <DisputeCard key={row.caseRow.id} row={row} isAdmin={isAdmin} />
-            ))}
-          </div>
-        </section>
+        <Section
+          icon={<Lock size={12} className="text-peri" />}
+          title="Disputed"
+          note="Outreach is frozen until a human resolves it"
+          count={disputes.length}
+        >
+          {disputes.map((row) => (
+            <DisputeCard key={row.caseRow.id} row={row} isAdmin={isAdmin} />
+          ))}
+        </Section>
       )}
 
       {escalations.length > 0 && (
-        <section className="mb-6">
-          <h2 className="mb-2 flex items-center gap-1.5 text-sm font-semibold tracking-tight text-muted uppercase">
-            <AlertTriangle size={13} className="text-bad" />
-            Escalated — the pipeline stopped and needs your decision
-          </h2>
-          <div className="space-y-3">
-            {escalations.map((row) => (
-              <EscalationCard key={row.caseRow.id} row={row} canAct={canAct} />
-            ))}
-          </div>
-        </section>
+        <Section
+          icon={<AlertTriangle size={12} className="text-crimson" />}
+          title="Escalated"
+          note="The pipeline stopped and needs your decision"
+          count={escalations.length}
+        >
+          {escalations.map((row) => (
+            <EscalationCard key={row.caseRow.id} row={row} canAct={canAct} />
+          ))}
+        </Section>
       )}
 
       {approvals.length > 0 && (
-        <section>
-          <h2 className="mb-2 flex items-center gap-1.5 text-sm font-semibold tracking-tight text-muted uppercase">
-            <ShieldCheck size={13} className="text-accent" />
-            Proposed actions awaiting approval
-          </h2>
-          <div className="space-y-3">
-            {approvals.map((row) => (
-              <ApprovalCard key={row.intervention!.id} row={row} canAct={canAct} />
-            ))}
-          </div>
-        </section>
+        <Section
+          icon={<ShieldCheck size={12} className="text-marigold" />}
+          title="Awaiting approval"
+          note="An agent proposed these; policy requires a person to say yes"
+          count={approvals.length}
+        >
+          {approvals.map((row) => (
+            <ApprovalCard key={row.intervention!.id} row={row} canAct={canAct} />
+          ))}
+        </Section>
       )}
     </div>
+  );
+}
+
+function Section({
+  icon,
+  title,
+  note,
+  count,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  note: string;
+  count: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="mb-8 last:mb-0">
+      <div className="mb-3 flex flex-wrap items-baseline gap-x-2.5 gap-y-1 border-b border-rule pb-2.5">
+        <span className="translate-y-[1px]">{icon}</span>
+        <h2 className="eyebrow text-ink">{title}</h2>
+        <span className="tnum text-2xs text-ash">{count}</span>
+        <span className="text-2xs text-ash">— {note}</span>
+      </div>
+      <div className="space-y-3">{children}</div>
+    </section>
   );
 }
 
@@ -101,22 +151,29 @@ function ApprovalCard({ row, canAct }: { row: HumanQueueItem; canAct: boolean })
 
   return (
     <Card>
-      <CardContent className="flex flex-wrap items-center gap-3 pt-4">
-        <CaseIdentity row={row} />
-        <div className="font-semibold tabular-nums">{formatINR(row.caseRow.exposurePaise)}</div>
-        <code className="rounded bg-black/5 px-1.5 py-0.5 text-xs">{iv.actionType}</code>
-        <PromiseDetail actionType={iv.actionType} params={iv.params} />
-        {iv.confidence && <Badge tone="blue">{Math.round(Number(iv.confidence) * 100)}% conf</Badge>}
-        <span className="max-w-md text-sm text-muted">{iv.rationale}</span>
-        <span className="text-xs text-muted">{timeAgo(iv.createdAt)}</span>
-        {canAct && (
-          <div className="ml-auto flex gap-2">
-            <Button variant="success" size="sm" disabled={decide.isPending} onClick={() => decide.mutate('approve')}>
-              Approve
-            </Button>
-            <Button variant="outline" size="sm" disabled={decide.isPending} onClick={() => decide.mutate('deny')}>
-              Deny
-            </Button>
+      <CardContent className="pt-4">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <CaseIdentity row={row} />
+          <span className="wide tnum text-base font-semibold text-brass">{formatINR(row.caseRow.exposurePaise)}</span>
+          <Chip>{iv.actionType}</Chip>
+          <PromiseDetail actionType={iv.actionType} params={iv.params} />
+          {iv.confidence && <Meter value={Number(iv.confidence)} />}
+          <span className="text-2xs text-ash">{timeAgo(iv.createdAt)}</span>
+          {canAct && (
+            <div className="ml-auto flex gap-2">
+              <Button variant="success" size="sm" disabled={decide.isPending} onClick={() => decide.mutate('approve')}>
+                Approve
+              </Button>
+              <Button variant="outline" size="sm" disabled={decide.isPending} onClick={() => decide.mutate('deny')}>
+                Deny
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {iv.rationale && (
+          <div className="keyline keyline-agent mt-3">
+            <Note text={iv.rationale} label="Why the agent proposed it" />
           </div>
         )}
         <MutationError error={decide.error} />
@@ -152,46 +209,46 @@ function DisputeCard({ row, isAdmin }: { row: HumanQueueItem; isAdmin: boolean }
   });
 
   return (
-    <Card className="border-purple-600/30">
+    <Card className="border-peri/30">
       <CardContent className="pt-4">
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <CaseIdentity row={row} />
-          <div className="font-semibold tabular-nums">{formatINR(row.caseRow.exposurePaise)}</div>
+          <span className="wide tnum text-base font-semibold text-brass">{formatINR(row.caseRow.exposurePaise)}</span>
           <Badge tone="violet">
-            <Lock size={10} className="mr-1" />
+            <Lock size={9} />
             outreach frozen
           </Badge>
-          {row.escalationReason && <span className="text-sm text-muted">{row.escalationReason}</span>}
+          {row.escalationReason && <span className="text-xs text-ash">{row.escalationReason}</span>}
           {isAdmin && !outcome && (
             <div className="ml-auto flex gap-2">
               <Button variant="outline" size="sm" onClick={() => setOutcome('rejected')}>
-                Dispute rejected — resume recovery
+                Reject the dispute — resume recovery
               </Button>
               <Button variant="destructive" size="sm" onClick={() => setOutcome('upheld')}>
-                Dispute upheld — write it off
+                Uphold it — write off
               </Button>
             </div>
           )}
-          {!isAdmin && <span className="ml-auto text-xs text-muted">Only an admin can resolve a dispute.</span>}
+          {!isAdmin && <span className="ml-auto text-2xs text-ash">Only an admin can resolve a dispute.</span>}
         </div>
 
         {row.summary && (
-          <p className="mt-3 rounded-md border border-border bg-surface p-3 text-sm whitespace-pre-wrap">
-            {row.summary}
-          </p>
+          <div className="keyline keyline-agent mt-3">
+            <Note text={row.summary} label="What the agent found" />
+          </div>
         )}
 
         {outcome && (
-          <div className="mt-3 space-y-2 rounded-md border border-border bg-surface p-3">
-            <p className="text-sm font-medium">
+          <div className="mt-4 space-y-3 rounded-md border border-rule bg-ink/[0.032] p-3.5">
+            <p className="text-sm text-ink">
               {outcome === 'rejected'
-                ? 'Resuming collection on a formally disputed charge. This is recorded against your account.'
-                : 'Closing this case as uncollectable. No further outreach.'}
+                ? 'This resumes collection on a charge the customer formally contested. Your name goes on the record.'
+                : 'This closes the case as uncollectable. Nothing further is sent.'}
             </p>
             <TextInput
               value={reason}
               onChange={setReason}
-              placeholder="Why? (recorded in the audit trail, min 10 characters)"
+              placeholder="Why? Recorded in the audit trail — at least 10 characters"
             />
             <div className="flex items-center gap-2">
               <Button
@@ -200,7 +257,7 @@ function DisputeCard({ row, isAdmin }: { row: HumanQueueItem; isAdmin: boolean }
                 disabled={reason.trim().length < 10 || submit.isPending}
                 onClick={() => submit.mutate()}
               >
-                Confirm — dispute {outcome}
+                {outcome === 'rejected' ? 'Reject the dispute' : 'Uphold the dispute'}
               </Button>
               <Button variant="ghost" size="sm" onClick={() => setOutcome(null)}>
                 Cancel
@@ -238,13 +295,18 @@ function EscalationCard({ row, canAct }: { row: HumanQueueItem; canAct: boolean 
   });
 
   return (
-    <Card className="border-bad/30">
+    <Card className="border-crimson/25">
       <CardContent className="pt-4">
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <CaseIdentity row={row} />
-          <div className="font-semibold tabular-nums">{formatINR(row.caseRow.exposurePaise)}</div>
-          {row.escalationReason && <Badge tone="red">{row.escalationReason}</Badge>}
-          {locked && <Badge tone="violet">holdout — action-locked</Badge>}
+          <span className="wide tnum text-base font-semibold text-brass">{formatINR(row.caseRow.exposurePaise)}</span>
+          {row.escalationReason && <Badge tone="red">{row.escalationReason.replace(/_/g, ' ')}</Badge>}
+          {locked && (
+            <Badge tone="violet">
+              <Lock size={9} />
+              holdout — action-locked
+            </Badge>
+          )}
           {canAct && (
             <div className="ml-auto flex gap-2">
               {!locked && (
@@ -263,16 +325,16 @@ function EscalationCard({ row, canAct }: { row: HumanQueueItem; canAct: boolean 
                 disabled={stop.isPending}
                 onClick={() => stop.mutate('human_request')}
               >
-                Do nothing — stop
+                Stop this case
               </Button>
             </div>
           )}
         </div>
 
         {row.summary && (
-          <p className="mt-3 rounded-md border border-border bg-surface p-3 text-sm whitespace-pre-wrap">
-            {row.summary}
-          </p>
+          <div className="keyline keyline-agent mt-3">
+            <Note text={row.summary} label="Handover note" />
+          </div>
         )}
 
         <MutationError error={stop.error ?? reanalyze.error} />
@@ -370,63 +432,66 @@ function ActionComposer({ caseId, onDone }: { caseId: string; onDone: () => void
   const incomplete = dateField ? !f[dateField] : false;
 
   return (
-    <div className="mt-3 space-y-3 rounded-md border border-border bg-surface p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="text-xs font-medium text-muted">Action</label>
-        <Select value={type} onChange={(v) => { setType(v as ComposableType); setF({}); }}>
-          {COMPOSABLE.map((a) => (
-            <option key={a.type} value={a.type}>
-              {a.label}
-            </option>
-          ))}
-        </Select>
-      </div>
+    <div className="keyline keyline-quiet mt-4 space-y-4 rounded-md border border-rule bg-ink/[0.032] p-4">
+      <Eyebrow>Propose an action</Eyebrow>
 
-      {type === 'send_email' && (
-        <div className="flex flex-wrap gap-2">
-          <Field label="Template">
-            <Select value={f.templateId ?? 'payment_reminder'} onChange={(v) => set('templateId', v)}>
-              {TEMPLATES.map((t) => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Language">
-            <Select value={f.language ?? 'en'} onChange={(v) => set('language', v)}>
-              <option value="en">en</option>
-              <option value="hi">hi</option>
-              <option value="hinglish">hinglish</option>
-            </Select>
-          </Field>
-          <Field label="Tone">
-            <Select value={f.toneRegister ?? 'friendly'} onChange={(v) => set('toneRegister', v)}>
-              <option value="formal">formal</option>
-              <option value="friendly">friendly</option>
-              <option value="firm">firm</option>
-            </Select>
-          </Field>
-        </div>
-      )}
-
-      {dateField && (
-        <Field label={type === 'record_promise_to_pay' ? 'Promised date' : 'When'}>
-          <input
-            type="datetime-local"
-            className="h-8 rounded-md border border-border bg-white px-2 text-sm"
-            value={f[dateField] ?? ''}
-            onChange={(e) => set(dateField, e.target.value)}
-          />
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Action">
+          <Select value={type} onChange={(v) => { setType(v as ComposableType); setF({}); }}>
+            {COMPOSABLE.map((a) => (
+              <option key={a.type} value={a.type}>
+                {a.label}
+              </option>
+            ))}
+          </Select>
         </Field>
-      )}
+
+        {type === 'send_email' && (
+          <>
+            <Field label="Template">
+              <Select value={f.templateId ?? 'payment_reminder'} onChange={(v) => set('templateId', v)}>
+                {TEMPLATES.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Language">
+              <Select value={f.language ?? 'en'} onChange={(v) => set('language', v)}>
+                <option value="en">en</option>
+                <option value="hi">hi</option>
+                <option value="hinglish">hinglish</option>
+              </Select>
+            </Field>
+            <Field label="Tone">
+              <Select value={f.toneRegister ?? 'friendly'} onChange={(v) => set('toneRegister', v)}>
+                <option value="formal">formal</option>
+                <option value="friendly">friendly</option>
+                <option value="firm">firm</option>
+              </Select>
+            </Field>
+          </>
+        )}
+
+        {dateField && (
+          <Field label={type === 'record_promise_to_pay' ? 'Promised date' : 'When'}>
+            <input
+              type="datetime-local"
+              className={inputClass}
+              value={f[dateField] ?? ''}
+              onChange={(e) => set(dateField, e.target.value)}
+            />
+          </Field>
+        )}
+      </div>
 
       {type === 'schedule_reminder' && (
         <Field label="Note">
-          <TextInput value={f.note ?? ''} onChange={(v) => set('note', v)} placeholder="why this reminder" />
+          <TextInput value={f.note ?? ''} onChange={(v) => set('note', v)} placeholder="Why this reminder" />
         </Field>
       )}
       {type === 'mark_wait' && (
         <Field label="Waiting for">
-          <TextInput value={f.waitingFor ?? ''} onChange={(v) => set('waitingFor', v)} placeholder="what we expect" />
+          <TextInput value={f.waitingFor ?? ''} onChange={(v) => set('waitingFor', v)} placeholder="What we expect to happen" />
         </Field>
       )}
       {type === 'record_promise_to_pay' && (
@@ -439,12 +504,13 @@ function ActionComposer({ caseId, onDone }: { caseId: string; onDone: () => void
         </Field>
       )}
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-3 border-t border-rule pt-3">
         <Button size="sm" disabled={propose.isPending || incomplete} onClick={() => propose.mutate(action())}>
-          Propose — policy gate still applies
+          Propose
         </Button>
-        <span className="text-xs text-muted">
-          The deterministic policy engine evaluates this before anything is sent.
+        <span className="text-2xs text-ash">
+          The policy engine evaluates this the same way it evaluates an agent's proposal. Choosing the action does not
+          skip the gate.
         </span>
       </div>
       <MutationError error={propose.error} />
@@ -454,13 +520,20 @@ function ActionComposer({ caseId, onDone }: { caseId: string; onDone: () => void
 
 /* -------------------------------- fragments -------------------------------- */
 
+const inputClass =
+  'h-8 rounded-md border border-rule bg-paper/60 px-2.5 text-sm text-ink placeholder:text-ash/60 transition-colors ease-desk hover:border-ash/40';
+
 function CaseIdentity({ row }: { row: HumanQueueItem }) {
   return (
-    <div className="min-w-48">
-      <Link to="/cases/$caseId" params={{ caseId: row.caseRow.id }} className="font-medium hover:underline">
+    <div className="min-w-44">
+      <Link
+        to="/cases/$caseId"
+        params={{ caseId: row.caseRow.id }}
+        className="font-medium text-ink decoration-brass/50 underline-offset-4 hover:underline"
+      >
         {row.customerName}
       </Link>
-      <div className="text-xs text-muted">
+      <div className="mt-0.5 text-2xs text-ash">
         {row.caseRow.causeHypothesis
           ? (CAUSE_LABELS[row.caseRow.causeHypothesis] ?? row.caseRow.causeHypothesis)
           : 'undiagnosed'}
@@ -471,8 +544,8 @@ function CaseIdentity({ row }: { row: HumanQueueItem }) {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-1">
-      <label className="text-xs font-medium text-muted">{label}</label>
+    <div className="flex flex-col gap-1.5">
+      <label className="eyebrow">{label}</label>
       {children}
     </div>
   );
@@ -480,11 +553,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function Select({ value, onChange, children }: { value: string; onChange: (v: string) => void; children: React.ReactNode }) {
   return (
-    <select
-      className="h-8 rounded-md border border-border bg-white px-2 text-sm"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-    >
+    <select className={cn(inputClass, 'pr-1.5')} value={value} onChange={(e) => onChange(e.target.value)}>
       {children}
     </select>
   );
@@ -493,7 +562,7 @@ function Select({ value, onChange, children }: { value: string; onChange: (v: st
 function TextInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
   return (
     <input
-      className="h-8 w-96 max-w-full rounded-md border border-border bg-white px-2 text-sm"
+      className={cn(inputClass, 'w-96 max-w-full')}
       value={value}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
@@ -504,7 +573,11 @@ function TextInput({ value, onChange, placeholder }: { value: string; onChange: 
 function MutationError({ error }: { error: unknown }) {
   if (!error) return null;
   const message = error instanceof ApiError ? `${error.status}: ${error.message}` : String(error);
-  return <p className="mt-2 text-xs text-bad">{message}</p>;
+  return (
+    <p className="mt-3 rounded-md border border-crimson/30 bg-crimson/10 px-3 py-2 font-mono text-2xs text-crimson">
+      {message}
+    </p>
+  );
 }
 
 /**

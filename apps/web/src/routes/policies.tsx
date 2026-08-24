@@ -3,7 +3,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, getUser } from '../lib/api';
 import type { PolicyVersionRow } from '../lib/types';
-import { Badge, Button, Card, CardContent, CardHeader, CardTitle } from '../components/ui/primitives';
+import {
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Eyebrow,
+  PageHeader,
+} from '../components/ui/primitives';
+import { cn } from '../lib/cn';
 
 export const Route = createFileRoute('/policies')({ component: PolicyStudio });
 
@@ -33,25 +43,32 @@ function PolicyStudio() {
 
   return (
     <div>
-      <h1 className="mb-4 text-xl font-bold tracking-tight">Policy Studio</h1>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card>
+      <PageHeader
+        title="Policy Studio"
+        lede="The rules that decide what may be sent, to whom, and how often. Every proposal — from an agent or a person — is checked against the active version."
+      >
+        {active && <Badge tone="brass">running v{active.version}</Badge>}
+      </PageHeader>
+
+      <div className="grid items-start gap-4 lg:grid-cols-[1.6fr_1fr]">
+        <Card className="keyline keyline-machine">
           <CardHeader>
-            <CardTitle>Active config {active ? `(v${active.version})` : ''}</CardTitle>
+            <CardTitle>Active configuration</CardTitle>
+            {draft !== null && <span className="eyebrow ml-auto text-marigold">unsaved draft</span>}
           </CardHeader>
           <CardContent>
             <textarea
-              className="h-96 w-full rounded-md border border-border bg-surface p-3 font-mono text-xs"
+              className="h-[30rem] w-full resize-y rounded-md border border-rule bg-paper/70 p-4 font-mono text-xs leading-relaxed text-ink/90 focus:border-brass/40"
               value={draftValue}
               readOnly={!isAdmin}
               onChange={(e) => setDraft(e.target.value)}
               spellCheck={false}
             />
-            {isAdmin && (
-              <div className="mt-2 flex gap-2">
+            {isAdmin ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
                 <input
-                  className="flex-1 rounded-md border border-border px-3 py-1.5 text-sm"
-                  placeholder="change comment"
+                  className="h-9 min-w-56 flex-1 rounded-md border border-rule bg-paper/60 px-3 text-sm text-ink placeholder:text-ash/60"
+                  placeholder="What changed, and why"
                   value={comment}
                   onChange={(e) => setComment(e.target.value)}
                 />
@@ -66,27 +83,52 @@ function PolicyStudio() {
                     }
                   }}
                 >
-                  Save as new version
+                  Save as a new version
                 </Button>
               </div>
+            ) : (
+              <p className="mt-3 text-2xs text-ash">
+                You are signed in as a {getUser()?.role ?? 'viewer'}. Only an admin can change policy.
+              </p>
             )}
-            {error && <p className="mt-2 text-sm text-bad">{error}</p>}
-            {!isAdmin && <p className="mt-2 text-xs text-muted">Sign in as admin to edit. Every save creates a new immutable version.</p>}
+            {error && (
+              <p className="mt-3 rounded-md border border-crimson/30 bg-crimson/10 px-3 py-2 font-mono text-2xs text-crimson">
+                {error}
+              </p>
+            )}
+            <p className="mt-3 border-t border-rule pt-3 text-2xs leading-relaxed text-ash">
+              Versions are immutable. Saving publishes a new one and leaves the old one on the record, so every past
+              verdict can still be explained by the version that produced it.
+            </p>
           </CardContent>
         </Card>
+
         <Card>
-          <CardHeader><CardTitle>Version history</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>Version history</CardTitle>
+            <span className="tnum ml-auto text-2xs text-ash">{data.length}</span>
+          </CardHeader>
           <CardContent className="space-y-2">
+            {data.length === 0 && <p className="text-sm text-ash">No versions yet.</p>}
             {data.map((p) => (
-              <div key={p.id} className="rounded-md border border-border p-2 text-sm">
-                <div className="flex items-center gap-2">
-                  <span className="font-semibold">v{p.version}</span>
+              <div
+                key={p.id}
+                className={cn(
+                  'keyline rounded-md border border-rule p-3 text-sm',
+                  p.active ? 'keyline-machine bg-ink/[0.032]' : 'keyline-quiet',
+                )}
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="wide tnum font-semibold text-ink">v{p.version}</span>
                   {p.active && <Badge tone="green">active</Badge>}
-                  <span className="text-muted">{p.comment ?? ''}</span>
-                  <button className="ml-auto text-xs text-accent hover:underline" onClick={() => setDiffAgainst(diffAgainst === p.version ? null : p.version)}>
+                  <button
+                    className="ml-auto text-2xs text-ash transition-colors ease-desk hover:text-brass"
+                    onClick={() => setDiffAgainst(diffAgainst === p.version ? null : p.version)}
+                  >
                     {diffAgainst === p.version ? 'hide diff' : 'diff vs active'}
                   </button>
                 </div>
+                {p.comment && <p className="mt-1 text-xs text-ash">{p.comment}</p>}
                 {diffAgainst === p.version && active && compare && <ConfigDiff a={compare.config} b={active.config} />}
               </div>
             ))}
@@ -112,18 +154,23 @@ function ConfigDiff({ a, b }: { a: Record<string, unknown>; b: Record<string, un
   const fb = flatten(b);
   const keys = [...new Set([...Object.keys(fa), ...Object.keys(fb)])].sort();
   const changed = keys.filter((k) => fa[k] !== fb[k]);
-  if (changed.length === 0) return <p className="mt-2 text-xs text-muted">identical to active</p>;
+  if (changed.length === 0) return <p className="mt-2 text-2xs text-ash">Identical to the active version.</p>;
   return (
-    <table className="mt-2 w-full font-mono text-xs">
-      <tbody>
-        {changed.map((k) => (
-          <tr key={k} className="border-t border-border/40">
-            <td className="py-1 pr-2">{k}</td>
-            <td className="py-1 pr-2 text-bad line-through">{fa[k] ?? '∅'}</td>
-            <td className="py-1 text-good">{fb[k] ?? '∅'}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <div className="mt-3 border-t border-rule pt-2">
+      <Eyebrow>
+        {changed.length} {changed.length === 1 ? 'difference' : 'differences'}
+      </Eyebrow>
+      <table className="mt-2 w-full font-mono text-2xs">
+        <tbody>
+          {changed.map((k) => (
+            <tr key={k} className="border-b border-rule/50 last:border-0">
+              <td className="py-1.5 pr-2 text-ink/80">{k}</td>
+              <td className="py-1.5 pr-2 text-right text-crimson line-through">{fa[k] ?? '∅'}</td>
+              <td className="py-1.5 pl-2 text-right text-sage">{fb[k] ?? '∅'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
