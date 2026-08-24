@@ -2,6 +2,137 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  @apply bg-surface text-ink antialiased;
+@layer base {
+  html {
+    color-scheme: light;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-paper text-ink antialiased;
+    /*
+     * Daylight falling across the desk from the top left. On paper the pool is
+     * a lightening rather than a glow, so the ground stays tinted at the edges
+     * and lifts toward white where the light lands. The only gradient here.
+     */
+    background-image: radial-gradient(120rem 44rem at 16% -14%, hsl(0 0% 100% / 0.95), transparent 68%);
+    background-attachment: fixed;
+    text-wrap: pretty;
+  }
+
+  /*
+   * A fixed film of grain, kept much lighter than the night desk needed: on
+   * paper the noise reads as tooth rather than as dither, so a little goes a
+   * long way before the text starts to look dirty.
+   */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.02;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  h1,
+  h2 {
+    text-wrap: balance;
+  }
+
+  ::placeholder {
+    @apply text-ash/70;
+    opacity: 1;
+  }
+
+  /* Money and IDs must never reflow as digits change under live refetch. */
+  :where(table, .tnum) {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* z-scale: 0 grain · 10 sticky rail · 20 top bar · 50 tooltip */
+
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    @apply outline-none ring-2 ring-brass/70 ring-offset-2 ring-offset-paper;
+  }
+
+  ::selection {
+    background: hsl(36 72% 32% / 0.18);
+  }
+
+  ::-webkit-scrollbar {
+    width: 11px;
+    height: 11px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full border-[3px] border-solid border-transparent bg-rule bg-clip-content;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(228 16% 72%);
+  }
+}
+
+@layer components {
+  /*
+   * The width axis of Archivo does the work a second typeface usually does.
+   * Expanded is reserved for the instrument voice: headings, eyebrows, and any
+   * figure that represents money.
+   */
+  .wide {
+    font-stretch: 118%;
+  }
+  .widest {
+    font-stretch: 125%;
+  }
+
+  .eyebrow {
+    @apply widest text-2xs font-semibold uppercase tracking-[0.16em] text-ash;
+  }
+
+  /*
+   * The provenance keyline: every block says who produced it. Solid brass is
+   * deterministic code — the ledger, the policy engine, an immutable slot.
+   * A dashed steel rail is an agent's reasoning, which is a proposal, never a
+   * fact. Crimson is a refusal. The rail is the one device carried across
+   * every screen, so provenance never has to be spelled out in prose.
+   */
+  .keyline {
+    @apply relative pl-4;
+  }
+  .keyline::before {
+    content: '';
+    @apply absolute bottom-0 left-0 top-0 w-[2px] rounded-full;
+  }
+  .keyline-machine::before {
+    @apply bg-brass/70;
+  }
+  .keyline-agent::before {
+    background-image: repeating-linear-gradient(
+      to bottom,
+      hsl(206 68% 38% / 0.9) 0 5px,
+      transparent 5px 10px
+    );
+  }
+  .keyline-deny::before {
+    @apply bg-crimson/80;
+  }
+  .keyline-holdout::before {
+    @apply bg-peri/60;
+  }
+  .keyline-quiet::before {
+    @apply bg-rule;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
