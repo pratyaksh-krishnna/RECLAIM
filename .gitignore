@@ -22,6 +22,10 @@ coverage/
 # generated demo data
 apps/api/seed-events.json
 
+# working notes
+PLAN.md
+FLOW.md
+
 # logs
 *.log
 npm-debug.log*
