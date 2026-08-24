@@ -18,8 +18,13 @@ import { cn } from '../lib/cn';
 
 export const Route = createFileRoute('/experiments')({ component: Experiments });
 
-const BRASS = 'hsl(36 72% 32%)';
-const PERI = 'hsl(244 48% 52%)';
+/*
+ * Chart fills, deliberately lighter than the text tokens. Brass is tuned to
+ * carry 4.5:1 as a numeral; the same value spread across a bar reads as mud.
+ * A fill only has to stay distinguishable, so both hues open up here.
+ */
+const BRASS = 'hsl(38 68% 52%)';
+const PERI = 'hsl(244 54% 68%)';
 
 function Experiments() {
   const { data: rec } = useQuery({ queryKey: ['recovery'], queryFn: () => api<RecoveryReport>('/analytics/recovery') });
@@ -127,7 +132,7 @@ function Experiments() {
                   labelStyle={{ color: 'hsl(226 13% 45%)' }}
                   formatter={(v: number) => [`${v.toFixed(1)}%`, 'recovered']}
                 />
-                <Bar dataKey="rate" radius={[3, 3, 0, 0]} barSize={72}>
+                <Bar dataKey="rate" radius={[3, 3, 0, 0]} barSize={72} isAnimationActive={false}>
                   {chart.map((d) => (
                     <Cell key={d.arm} fill={d.arm === 'Treatment' ? BRASS : PERI} />
                   ))}

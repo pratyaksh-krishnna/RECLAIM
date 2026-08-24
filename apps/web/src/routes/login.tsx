@@ -58,7 +58,7 @@ function LoginPage() {
       </div>
 
       {/* the door */}
-      <div className="flex items-center px-8 py-14 lg:px-12">
+      <div className="flex items-center px-8 py-14 lg:bg-panel lg:px-12">
         <form onSubmit={submit} className="w-full max-w-sm">
           <Eyebrow>Sign in</Eyebrow>
           <h2 className="wide mt-2 text-xl font-semibold text-ink">Open the desk</h2>

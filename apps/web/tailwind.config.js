@@ -20,9 +20,9 @@ export default {
     extend: {
       colors: {
         /* grounds, light to dark */
-        paper: 'hsl(228 32% 97%)', // page ground — tinted, never pure white
+        paper: 'hsl(228 28% 94%)', // page ground — tinted, and far enough off white that panels lift
         panel: 'hsl(0 0% 100%)', // the card sitting on it
-        raise: 'hsl(228 30% 95%)', // hover / recessed fill
+        raise: 'hsl(228 26% 96%)', // hover / recessed fill on a white panel
         rule: 'hsl(228 20% 87%)', // hairline
         ash: 'hsl(226 13% 45%)', // secondary text
         ink: 'hsl(226 42% 15%)', // primary text — deep indigo, not black
