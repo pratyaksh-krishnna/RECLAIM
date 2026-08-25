@@ -4,7 +4,7 @@
 
 **Central principle: AI agents reason about recovery; deterministic code controls money.** No agent ever computes, emits, or modifies a monetary amount that reaches a customer or a payment API. There is **no ML anywhere** — deterministic rule tables plus LLM calls with forced structured outputs.
 
-All agent reasoning is a **real Anthropic API call** (`claude-haiku-4-5`). There is no stub, mock, or heuristic fallback in `src/` — `ANTHROPIC_API_KEY` is required to boot. Payments remain mocked by default (`PAYMENTS_MODE=sandbox`).
+All agent reasoning is a **real API call** — Anthropic (`claude-haiku-4-5`, the default) or OpenAI, selected with `LLM_PROVIDER`. There is no stub, mock, or heuristic fallback in `src/`, and the API refuses to boot without a key for the provider it is going to call. Payments remain mocked by default (`PAYMENTS_MODE=sandbox`).
 
 ## Getting started
 
@@ -14,7 +14,7 @@ All agent reasoning is a **real Anthropic API call** (`claude-haiku-4-5`). There
 |---|---|
 | **Node 22+** | `node -v` — pnpm ships with it via corepack |
 | **Docker** | runs Postgres 16 and Redis; nothing else is needed locally |
-| **An Anthropic API key** | **required** — agents are always real `claude-haiku-4-5` calls and the API refuses to boot without one. Get one at [console.anthropic.com](https://console.anthropic.com/settings/keys) |
+| **An LLM API key** | **required** — agents are always real model calls and the API refuses to boot without one. Anthropic by default ([console.anthropic.com](https://console.anthropic.com/settings/keys)), or set `LLM_PROVIDER=openai` and supply `OPENAI_API_KEY` ([platform.openai.com](https://platform.openai.com/api-keys)) |
 
 No Razorpay account is needed. Payments are mocked by the sandbox provider by default.
 
@@ -38,6 +38,20 @@ Open `.env` and set the one required value:
 ```ini
 ANTHROPIC_API_KEY=sk-ant-...   # required — the API will not boot without it
 ```
+
+To run the agents on OpenAI instead, switch the provider and supply its key:
+
+```ini
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+```
+
+Each provider keeps its own model id (`ANTHROPIC_MODEL`, `OPENAI_MODEL`), so the
+one you are not using can sit in `.env` unread — flipping `LLM_PROVIDER` can
+never send a Claude id to OpenAI or the reverse.
+
+Nothing downstream of the `LlmClient` seam changes: every call is forced-structured
+and Zod-validated either way, so the provider cannot widen what an agent may say.
 
 Everything else works as shipped. `.env` is gitignored; never commit a real key.
 
@@ -115,7 +129,8 @@ holdout says Y would have arrived anyway, incremental = X − Y* with a 95% CI.
 
 | Symptom | Fix |
 |---|---|
-| API exits immediately on boot | `ANTHROPIC_API_KEY` is unset in `.env` — it is required |
+| API exits immediately on boot | the selected provider's key (`ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` when `LLM_PROVIDER=openai`) is unset in `.env` — it is required |
+| `LLM_MODEL is no longer read` on boot | rename it to `ANTHROPIC_MODEL` or `OPENAI_MODEL` in `.env`; each provider keeps its own |
 | `column "..." does not exist` | run `pnpm db:migrate` |
 | `ECONNREFUSED :5433` or `:6380` | `docker compose up -d`, then `docker ps` to confirm both are healthy |
 | Port already in use | change `API_PORT` in `.env`; the web dev server picks the next free port itself |

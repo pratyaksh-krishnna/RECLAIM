@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, isNotNull } from 'drizzle-orm';
-import { ActionParams, CanonicalEvent } from '@reclaim/shared';
+import { ActionParams, CanonicalEvent, type TemplateSkeleton } from '@reclaim/shared';
 import type { Db, Tx } from '../db/client.js';
 import {
   communications,
@@ -326,12 +326,42 @@ async function runTool(
     case 'send_email': {
       const skeleton = TEMPLATE_REGISTRY[action.templateId];
       if (!skeleton) throw new ToolAuthorizationError(`template '${action.templateId}' not in the approved registry`);
+      // pre_debit_notice announces a {{debit_date}} that exists only once a
+      // mandate debit has been scheduled — schedule_mandate_reexecution sends
+      // it itself, as step 1. A standalone send_email has no debit to announce,
+      // so honouring one here could only produce a compliance notice for a
+      // debit that was never scheduled.
+      if (skeleton.templateId === 'pre_debit_notice') {
+        throw new ToolAuthorizationError(
+          "template 'pre_debit_notice' is sent only by schedule_mandate_reexecution, never by send_email",
+        );
+      }
+      const immutableValues = buildImmutableValues(skeleton.templateId, invoice, amountDuePaise);
+      // a notice is only actionable if it carries a live link to pay from —
+      // generate one (right amount, resolved server-side) for the same reason
+      // create_payment_link does; reused on retry via the same idempotency key.
+      //
+      // Ask the SKELETON what it needs rather than listing template ids by
+      // hand. payment_link_delivery has always declared {{payment_link}} and
+      // has always been reachable from send_email, but only create_payment_link
+      // ever supplied it — so an agent naming it here stranded the case with
+      // "missing immutable slot value 'payment_link'". A hand-maintained list
+      // is what allowed that; asking the template cannot go out of date.
+      let paymentLink: { providerLinkId: string; shortUrl: string } | null = null;
+      if (needsPaymentLink(skeleton)) {
+        paymentLink = await deps.provider.createPaymentLink({
+          amountPaise: amountDuePaise,
+          currency: 'INR',
+          description: `Invoice ${invoice.providerInvoiceId ?? invoice.id}`,
+          referenceId: invoice.id,
+          customer: { name: customer.name, email: customer.email },
+          idempotencyKey,
+          expireByUnix: Math.floor((now().getTime() + 7 * 86_400_000) / 1000),
+        });
+        immutableValues['payment_link'] = paymentLink.shortUrl;
+      }
       // defense in depth: fills were linted at agent time; lint again here
-      const rendered = renderTemplate(
-        skeleton,
-        buildImmutableValues(skeleton.templateId, invoice, amountDuePaise),
-        { ...DEFAULT_FREE_FILLS, ...action.slotFills },
-      );
+      const rendered = renderTemplate(skeleton, immutableValues, { ...DEFAULT_FREE_FILLS, ...action.slotFills });
       const sent = await deps.mailer.send({
         to: { name: customer.name, email: customer.email },
         subject: rendered.subject,
@@ -362,9 +392,12 @@ async function runTool(
             extra: { waitUntil: new Date(now().getTime() + 5 * 86_400_000) },
           });
         }
-        await markExecuted(tx, ctx, now, { providerMessageId: sent.providerMessageId });
+        await markExecuted(tx, ctx, now, {
+          providerMessageId: sent.providerMessageId,
+          ...(paymentLink ? { providerLinkId: paymentLink.providerLinkId, shortUrl: paymentLink.shortUrl } : {}),
+        });
       });
-      return { providerMessageId: sent.providerMessageId };
+      return { providerMessageId: sent.providerMessageId, ...(paymentLink ? { paymentLink: paymentLink.shortUrl } : {}) };
     }
 
     case 'schedule_reminder': {
@@ -467,7 +500,17 @@ async function runTool(
   }
 }
 
-function buildImmutableValues(
+/**
+ * Whether a skeleton declares the server-injected {{payment_link}} slot. The
+ * send_email path and its test both ask this one question, so they cannot
+ * drift apart the way the old hand-written template list did.
+ */
+export function needsPaymentLink(skeleton: TemplateSkeleton): boolean {
+  return skeleton.slots.some((s) => s.kind === 'immutable' && s.name === 'payment_link');
+}
+
+/** Exported for the coverage test in test/unit/templates.test.ts. */
+export function buildImmutableValues(
   templateId: string,
   invoice: typeof invoices.$inferSelect,
   amountDuePaise: number,

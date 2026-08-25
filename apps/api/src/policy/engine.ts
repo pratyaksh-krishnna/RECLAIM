@@ -30,12 +30,63 @@ const CONTACT_ACTIONS: ReadonlySet<ActionParams['type']> = new Set([
 ]);
 
 export function localHour(nowIso: string, timeZone: string): number {
-  const fmt = new Intl.DateTimeFormat('en-US', { timeZone, hour: 'numeric', hourCycle: 'h23' });
-  return Number(fmt.format(new Date(nowIso)));
+  return localHourMinute(nowIso, timeZone).hour;
+}
+
+function localHourMinute(nowIso: string, timeZone: string): { hour: number; minute: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: 'numeric',
+    minute: 'numeric',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(nowIso));
+  const get = (type: string): number => Number(parts.find((p) => p.type === type)?.value ?? 0);
+  return { hour: get('hour'), minute: get('minute') };
 }
 
 function inQuietHours(hour: number, startHour: number, endHour: number): boolean {
   return startHour > endHour ? hour >= startHour || hour < endHour : hour >= startHour && hour < endHour;
+}
+
+export interface ContactWindow {
+  allowedNow: boolean;
+  localHour: number;
+  /** when contact becomes permitted again; null when it already is */
+  nextAllowedAt: string | null;
+}
+
+/**
+ * THE definition of "may this customer be contacted right now". Both callers
+ * use it: the quiet_hours rule below, and buildCaseContext when it tells an
+ * agent what it is allowed to do.
+ *
+ * They used to work it out separately from the raw parts — an instant, a
+ * timezone, and a {startHour, endHour} pair. On one case the agent read those
+ * hours as the window in which contact was PERMITTED, decided 02:28 IST fell
+ * outside it, and parked a 70-day-overdue invoice for a day; its twin proposed
+ * an email in the same minute and this rule passed it. Two readings of one rule
+ * is one reading too many, so there is now a single function and a single
+ * answer.
+ */
+export function contactWindow(
+  nowIso: string,
+  timeZone: string,
+  quietHours: { startHour: number; endHour: number },
+): ContactWindow {
+  const { hour, minute } = localHourMinute(nowIso, timeZone);
+  if (!inQuietHours(hour, quietHours.startHour, quietHours.endHour)) {
+    return { allowedNow: true, localHour: hour, nextAllowedAt: null };
+  }
+  // Elapsed minutes until the window ends, measured from local wall-clock
+  // rather than by rebuilding a local date — a zone offset by a half hour
+  // (IST is UTC+5:30) must still land on the hour, not thirty minutes past it.
+  const minutesToEnd = ((quietHours.endHour - hour + 24) % 24) * 60 - minute;
+  const wait = minutesToEnd > 0 ? minutesToEnd : minutesToEnd + 24 * 60;
+  return {
+    allowedNow: false,
+    localHour: hour,
+    nextAllowedAt: new Date(new Date(nowIso).getTime() + wait * 60_000).toISOString(),
+  };
 }
 
 type RuleOutcome = { outcome: 'pass' | 'deny' | 'require_approval' | 'skipped'; detail?: string };
@@ -77,10 +128,10 @@ const RULES: Rule[] = [
     description: 'no customer contact during quiet hours in the customer timezone',
     evaluate: (req, cfg) => {
       if (!CONTACT_ACTIONS.has(req.action.type)) return { outcome: 'skipped' };
-      const hour = localHour(req.nowIso, req.customerTimezone);
-      return inQuietHours(hour, cfg.quietHours.startHour, cfg.quietHours.endHour)
-        ? { outcome: 'deny', detail: `local hour ${hour} is inside quiet hours` }
-        : { outcome: 'pass' };
+      const window = contactWindow(req.nowIso, req.customerTimezone, cfg.quietHours);
+      return window.allowedNow
+        ? { outcome: 'pass' }
+        : { outcome: 'deny', detail: `local hour ${window.localHour} is inside quiet hours` };
     },
   },
   {

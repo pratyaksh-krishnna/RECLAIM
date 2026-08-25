@@ -3,10 +3,11 @@ import type { LlmClient, StructuredCallArgs, StructuredCallResult } from '../../
 /**
  * TEST DOUBLE ONLY — never imported by src/.
  *
- * Production has exactly one LLM client (the real Anthropic adapter). Tests
- * cannot call a live model on every run: it would be slow, non-deterministic,
- * cost money, and make assertions untestable. So the suite injects this fake
- * at the `LlmClient` seam and exercises everything downstream of it for real —
+ * Production has only real LLM clients (the Anthropic and OpenAI adapters).
+ * Tests cannot call a live model on every run: it would be slow,
+ * non-deterministic, cost money, and make assertions untestable. So the suite
+ * injects this fake at the `LlmClient` seam and exercises everything
+ * downstream of it for real —
  * the Zod contracts, the free-slot lint, the policy engine, the tools, the
  * idempotency claims and the FSM.
  */
@@ -118,17 +119,16 @@ export class FakeLlmClient implements LlmClient {
       confidence: 0.72,
       stopConditions: ['customer disputes the charge', 'customer opts out', 'invoice is paid'],
     };
+    // windows, not dates — the agent-facing catalog has no datetime field for
+    // a fake (or a model) to fill in; the runner resolves these server-side
     if (input.lastReplyIntent === 'paid_claim') {
-      const in3d = new Date(Date.now() + 3 * 86_400_000).toISOString();
-      return { ...base, action: { type: 'mark_wait', waitUntil: in3d, waitingFor: 'reconciliation' } };
+      return { ...base, action: { type: 'mark_wait', waitFor: 'medium', waitingFor: 'reconciliation' } };
     }
     if (input.lastReplyIntent === 'will_pay') {
-      const in3d = new Date(Date.now() + 3 * 86_400_000).toISOString();
-      return { ...base, action: { type: 'schedule_reminder', remindAt: in3d, note: 'follow up' } };
+      return { ...base, action: { type: 'schedule_reminder', remindIn: 'medium', note: 'follow up' } };
     }
     if (input.lastDenyReason?.includes('quiet')) {
-      const later = new Date(Date.now() + 12 * 3_600_000).toISOString();
-      return { ...base, action: { type: 'schedule_reminder', remindAt: later, note: 'retry outside quiet hours' } };
+      return { ...base, action: { type: 'schedule_reminder', remindIn: 'same_day', note: 'retry outside quiet hours' } };
     }
     if (input.lastDenyReason) {
       return { ...base, confidence: 0.5, action: { type: 'escalate_to_human', reason: `policy denied: ${input.lastDenyReason}` } };
@@ -136,8 +136,7 @@ export class FakeLlmClient implements LlmClient {
     switch (input.causeHypothesis) {
       case 'insufficient_funds': {
         if ((input.rail === 'upi_autopay' || input.rail === 'emandate') && (input.amountDuePaise ?? 0) <= 1_500_000) {
-          const in48h = new Date(Date.now() + 48 * 3_600_000).toISOString();
-          return { ...base, confidence: 0.8, action: { type: 'schedule_mandate_reexecution', scheduleAt: in48h } };
+          return { ...base, confidence: 0.8, action: { type: 'schedule_mandate_reexecution', scheduleIn: 'medium' } };
         }
         return { ...base, confidence: 0.78, action: { type: 'create_payment_link' } };
       }
@@ -150,8 +149,7 @@ export class FakeLlmClient implements LlmClient {
       case 'habitual_late_payer':
       case 'cash_flow_stress':
         if (input.hasPaymentLinkOutstanding || (input.emailsSentLast14d ?? 0) >= 1) {
-          const in3d = new Date(Date.now() + 3 * 86_400_000).toISOString();
-          return { ...base, confidence: 0.65, action: { type: 'schedule_reminder', remindAt: in3d, note: 'follow up' } };
+          return { ...base, confidence: 0.65, action: { type: 'schedule_reminder', remindIn: 'medium', note: 'follow up' } };
         }
         return {
           ...base,
