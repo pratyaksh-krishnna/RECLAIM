@@ -10,6 +10,7 @@ import {
   ReplyInterpretation,
   SummarizerOutput,
   TriageOutput,
+  resolveProposedAction,
   type TemplateId,
 } from '@reclaim/shared';
 import { TEMPLATE_REGISTRY, validateFreeFills } from '../templates/registry.js';
@@ -23,6 +24,7 @@ import {
   recoveryCases,
 } from '../db/schema.js';
 import { writeAudit } from '../audit/audit.js';
+import { getActivePolicy } from '../policy/service.js';
 import type { LlmClient } from '../llm/index.js';
 import { lockCase, transitionCase, type CaseRow } from '../orchestrator/caseService.js';
 import { isTerminal } from '../orchestrator/fsm.js';
@@ -350,12 +352,20 @@ async function postProcess(
         });
         return;
       }
+      // The agent named a delay window, not a moment. Turn it into one here,
+      // against the real clock and the policy the engine is about to judge it
+      // by — before the intervention is persisted, because the policy gate
+      // evaluates the proposal and needs a concrete datetime to evaluate.
+      const { config } = await getActivePolicy(tx);
+      const action = resolveProposedAction(out.action, now(), {
+        preDebitNoticeHours: config.preDebitNoticeHours,
+      });
       const [created] = await tx
         .insert(interventions)
         .values({
           caseId: caseRow.id,
-          actionType: out.action.type,
-          params: out.action,
+          actionType: action.type,
+          params: action,
           rationale: out.rationale,
           confidence: String(out.confidence),
           stopConditions: out.stopConditions,
@@ -368,9 +378,10 @@ async function postProcess(
         actorType: 'agent',
         actorId: 'strategy',
         eventType: 'action.proposed',
-        payload: { interventionId: created?.id, action: out.action, confidence: out.confidence },
+        // both shapes: what the agent chose, and what the server made of it
+        payload: { interventionId: created?.id, proposed: out.action, action, confidence: out.confidence },
       });
-      if (out.action.type === 'send_email') {
+      if (action.type === 'send_email') {
         // free slots must be filled by the communication agent before the policy gate
         afterCommit(() => deps.enqueueAgent({ caseId: caseRow.id, agent: 'communication' }));
         return;

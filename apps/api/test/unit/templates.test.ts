@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ActionParams } from '@reclaim/shared';
+import { ActionParams, type TemplateId } from '@reclaim/shared';
 import {
   DEFAULT_FREE_FILLS,
   TEMPLATE_REGISTRY,
@@ -8,12 +8,14 @@ import {
   renderTemplate,
   validateFreeFills,
 } from '../../src/templates/registry.js';
+import { buildImmutableValues, needsPaymentLink } from '../../src/tools/execute.js';
 
 /** immutable values the payment_reminder skeleton needs to render at all */
 const IMMUTABLES_FOR_REMINDER = {
   amount: formatINR(99_900),
   invoice_number: 'INV-001',
   due_date: '1 August 2026',
+  payment_link: 'https://rzp.io/sbx/abc',
   legal_footer: 'legal',
 };
 
@@ -144,5 +146,53 @@ describe('agent-time validation matches render-time validation', () => {
         `agent gate MUST also reject ${JSON.stringify(fills)}`,
       ).toBeGreaterThan(0);
     }
+  });
+});
+
+/**
+ * The strategy agent may set `templateId` to ANY member of the closed
+ * TemplateId enum, so every template send_email accepts must be renderable
+ * from server state alone.
+ *
+ * payment_link_delivery was not. It has always declared {{payment_link}} and
+ * has always been reachable from send_email, but only the create_payment_link
+ * tool ever supplied that value — so an agent naming it stranded the case in
+ * the human inbox with "missing immutable slot value 'payment_link'": an
+ * engineering error dressed up as a business decision, which is exactly what
+ * closing templateId to an enum was supposed to prevent.
+ */
+describe('send_email can render every template it is allowed to name', () => {
+  const invoice = {
+    id: '0e322da4-743a-43c1-85b8-ab6d9e135a36',
+    providerInvoiceId: 'INV-001',
+    dueDate: new Date('2026-08-01T00:00:00Z'),
+  } as Parameters<typeof buildImmutableValues>[1];
+
+  const SEND_EMAIL_TEMPLATES = (Object.keys(TEMPLATE_REGISTRY) as TemplateId[]).filter(
+    (id) => id !== 'pre_debit_notice',
+  );
+
+  it.each(SEND_EMAIL_TEMPLATES)('%s renders from server state alone', (templateId) => {
+    const skeleton = TEMPLATE_REGISTRY[templateId];
+    const values = buildImmutableValues(templateId, invoice, 99_900);
+    // the same question runTool asks before generating a link
+    if (needsPaymentLink(skeleton)) values['payment_link'] = 'https://rzp.io/sbx/abc';
+
+    const missing = skeleton.slots
+      .filter((slot) => slot.kind === 'immutable' && !(slot.name in values))
+      .map((slot) => slot.name);
+    expect(missing).toEqual([]);
+    expect(() => renderTemplate(skeleton, values, DEFAULT_FREE_FILLS)).not.toThrow();
+  });
+
+  it('pre_debit_notice is refused by send_email because server state cannot fill it', () => {
+    const skeleton = TEMPLATE_REGISTRY['pre_debit_notice'];
+    const values = buildImmutableValues('pre_debit_notice', invoice, 99_900);
+    const missing = skeleton.slots
+      .filter((slot) => slot.kind === 'immutable' && !(slot.name in values))
+      .map((slot) => slot.name);
+    // both only exist once a mandate debit has actually been scheduled, which
+    // is why schedule_mandate_reexecution owns this template
+    expect(missing).toEqual(['customer_name', 'debit_date']);
   });
 });

@@ -9,6 +9,8 @@ import {
   policyDecisions,
   promisesToPay,
 } from '../db/schema.js';
+import { contactWindow } from '../policy/engine.js';
+import { getActivePolicy } from '../policy/service.js';
 import type { CaseRow } from '../orchestrator/caseService.js';
 
 /**
@@ -16,6 +18,40 @@ import type { CaseRow } from '../orchestrator/caseService.js';
  * fact from the DB; sizes are capped so snapshots stay small and auditable.
  */
 export interface CaseContext {
+  /**
+   * The clock. Without it an agent cannot turn "wait three days" into anything,
+   * and cannot tell whether a cooling-off period has elapsed. It used to be
+   * absent: a careful model then refused to propose scheduling actions at all
+   * and escalated instead, while a less careful one invented a plausible
+   * timestamp that passed every downstream gate unchallenged.
+   */
+  nowIso: string;
+  customerTimezone: string;
+  lastAttemptAt: string | null;
+  /**
+   * Whether this customer may be contacted right now — computed by the SAME
+   * function the policy engine's quiet_hours rule uses, so the agent's view and
+   * the gate's verdict cannot disagree. Handed over as an answer rather than as
+   * a timezone, an instant and an hour range to reconcile: asked to do that
+   * itself, an agent read the quiet window as the permitted one and parked an
+   * overdue invoice for a day.
+   */
+  contactAllowedNow: boolean;
+  /** when contact becomes permitted again; null when it already is */
+  nextContactAllowedAt: string | null;
+  /**
+   * The deterministic limits the policy engine will enforce on this proposal.
+   * Handing them over does not weaken the gate — the engine still decides, and
+   * an agent cannot edit these — it just stops the agent guessing at rules it
+   * is about to be judged against.
+   */
+  contactRules: {
+    minHoursBetweenAttempts: number;
+    maxEmailsPerRolling14d: number;
+    maxRecoveryAttemptsPerInvoice: number;
+    preDebitNoticeHours: number;
+    quietHours: { startHour: number; endHour: number };
+  };
   caseId: string;
   leakType: string;
   state: string;
@@ -83,8 +119,22 @@ export async function buildCaseContext(tx: Tx, caseRow: CaseRow, now: () => Date
     .limit(1);
 
   const daysOverdue = Math.max(0, Math.floor((now().getTime() - invoice.dueDate.getTime()) / 86_400_000));
+  const { config } = await getActivePolicy(tx);
+  const window = contactWindow(now().toISOString(), customer.timezone, config.quietHours);
 
   return {
+    nowIso: now().toISOString(),
+    contactAllowedNow: window.allowedNow,
+    nextContactAllowedAt: window.nextAllowedAt,
+    customerTimezone: customer.timezone,
+    lastAttemptAt: caseRow.lastAttemptAt?.toISOString() ?? null,
+    contactRules: {
+      minHoursBetweenAttempts: config.minHoursBetweenAttempts,
+      maxEmailsPerRolling14d: config.maxEmailsPerRolling14d,
+      maxRecoveryAttemptsPerInvoice: config.maxRecoveryAttemptsPerInvoice,
+      preDebitNoticeHours: config.preDebitNoticeHours,
+      quietHours: config.quietHours,
+    },
     caseId: caseRow.id,
     leakType: caseRow.leakType,
     state: caseRow.state,

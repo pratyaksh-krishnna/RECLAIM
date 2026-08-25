@@ -18,7 +18,7 @@ export class AnthropicLlmClient implements LlmClient {
     args: StructuredCallArgs,
     jsonSchema: Record<string, unknown>,
   ): Promise<StructuredCallResult> {
-    const model = env.LLM_MODEL;
+    const model = env.ANTHROPIC_MODEL;
     const started = Date.now();
     const response = await this.client.messages.create({
       model,

@@ -201,14 +201,7 @@ export async function handleCanonicalEvent(db: Db, deps: OrchestratorDeps, event
   }
 }
 
-/**
- * Dispatching an agent does NOT move the case, so `diagnosed` is not consumed
- * by acting on it. Two case-steps arriving close together therefore both saw
- * the same unchanged state and both dispatched strategy — the FOR UPDATE lock
- * serialises the writes but cannot stop the second look from repeating the
- * first's decision. That produced two proposals, two policy ALLOWs, and the
- * same email sent to the customer twice ten seconds apart.
- */
+
 async function hasOpenIntervention(tx: Tx, caseId: string): Promise<boolean> {
   const [open] = await tx
     .select({ id: interventions.id })

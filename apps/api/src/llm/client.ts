@@ -6,8 +6,9 @@ import type { z } from 'zod';
  * the RUNNER validates with Zod. Free-text parsing of LLM output is forbidden
  * everywhere in this codebase.
  *
- * There is exactly one production implementation (Anthropic). No stub, no
- * offline mode: agent reasoning is always a real model call.
+ * Two production implementations — Anthropic and OpenAI — selected by
+ * LLM_PROVIDER. No stub, no offline mode: agent reasoning is always a real
+ * model call, whichever provider is configured.
  */
 export interface StructuredCallArgs {
   schemaName: string;

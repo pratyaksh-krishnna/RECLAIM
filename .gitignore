@@ -26,6 +26,11 @@ apps/api/seed-events.json
 PLAN.md
 FLOW.md
 
+# local agent tooling — installed skills, not project source
+.agents/
+.claude/
+skills-lock.json
+
 # logs
 *.log
 npm-debug.log*

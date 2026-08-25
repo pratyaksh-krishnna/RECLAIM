@@ -32,6 +32,7 @@ export const TEMPLATE_REGISTRY: Record<TemplateId, TemplateSkeleton> = {
 {{context_sentence}}
 
 Your payment of {{amount}} for invoice {{invoice_number}} could not be processed.
+Pay securely here (UPI, cards, netbanking): {{payment_link}}
 
 {{sign_off}}
 
@@ -40,6 +41,7 @@ Your payment of {{amount}} for invoice {{invoice_number}} could not be processed
       ...commonFreeSlots,
       { name: 'amount', kind: 'immutable', description: 'exact amount due, server-injected' },
       { name: 'invoice_number', kind: 'immutable', description: 'invoice reference, server-injected' },
+      { name: 'payment_link', kind: 'immutable', description: 'provider short URL, server-injected' },
       { name: 'legal_footer', kind: 'immutable', description: 'legal/opt-out text, server-injected' },
     ],
     supportedLanguages: ['en', 'hi', 'hinglish'],
@@ -94,6 +96,7 @@ No action is needed if you wish to proceed. To cancel this debit, use your UPI o
 {{context_sentence}}
 
 Invoice {{invoice_number}} for {{amount}} was due on {{due_date}} and remains unpaid.
+Pay securely here (UPI, cards, netbanking): {{payment_link}}
 
 {{sign_off}}
 
@@ -103,6 +106,7 @@ Invoice {{invoice_number}} for {{amount}} was due on {{due_date}} and remains un
       { name: 'amount', kind: 'immutable', description: 'exact amount due' },
       { name: 'invoice_number', kind: 'immutable', description: 'invoice reference' },
       { name: 'due_date', kind: 'immutable', description: 'original due date' },
+      { name: 'payment_link', kind: 'immutable', description: 'provider short URL, server-injected' },
       { name: 'legal_footer', kind: 'immutable', description: 'legal text' },
     ],
     supportedLanguages: ['en', 'hi', 'hinglish'],
