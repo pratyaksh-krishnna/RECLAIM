@@ -6,6 +6,11 @@
 
 All agent reasoning is a **real API call** — Anthropic (`claude-haiku-4-5`, the default) or OpenAI, selected with `LLM_PROVIDER`. There is no stub, mock, or heuristic fallback in `src/`, and the API refuses to boot without a key for the provider it is going to call. Payments remain mocked by default (`PAYMENTS_MODE=sandbox`).
 
+#ARCHITECTURE
+
+<img width="1904" height="3046" alt="image" src="https://github.com/user-attachments/assets/5123d0ca-872f-4c2e-9962-58450e93f8e6" />
+
+
 ## Getting started
 
 ### Prerequisites
