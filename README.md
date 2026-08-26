@@ -8,7 +8,8 @@ All agent reasoning is a **real API call** — Anthropic (`claude-haiku-4-5`, th
 
 # ARCHITECTURE
 
-<img width="1904" height="3046" alt="image" src="https://github.com/user-attachments/assets/5123d0ca-872f-4c2e-9962-58450e93f8e6" />
+<img width="433" height="636" alt="image" src="https://github.com/user-attachments/assets/16a4b926-55ce-41ed-9eb0-d608b18ae4e4" />
+
 
 
 ## Getting started
