@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { evaluatePolicyRequest, contactWindow } from '../../src/policy/engine.js';
+import {
+  deferContactPastQuietHours,
+  evaluatePolicyRequest,
+  contactWindow,
+} from '../../src/policy/engine.js';
 import { DEFAULT_POLICY_CONFIG } from '../../src/policy/defaults.js';
 import type { PolicyRequest } from '@reclaim/shared';
 
@@ -43,7 +47,7 @@ function requestAt(nowIso: string, timeZone = IST): PolicyRequest {
     lastAttemptAt: null,
     emailsSentLast14d: 0,
     agentInvocationCount: 1,
-    caseAgeHours: 1,
+    hoursWithoutProgress: 1,
     preDebitNotificationScheduledFor: null,
   };
 }
@@ -98,5 +102,95 @@ describe('contactWindow', () => {
     const window = contactWindow('2026-08-26T03:30:00.000Z', 'Europe/London', quietHours);
     expect(window.allowedNow).toBe(false);
     expect(contactWindow(window.nextAllowedAt!, 'Europe/London', quietHours).allowedNow).toBe(true);
+  });
+});
+
+/**
+ * The 24-hour sweep above runs on an ordinary day, so it cannot see this: the
+ * reopen time used to be computed by adding wall-clock minutes to a UTC
+ * instant, which is off by an hour across a DST change. Fall-back returned a
+ * moment still inside quiet hours; spring-forward overshot and discarded an
+ * hour of contact time. Either way the agent was told contact reopens when the
+ * gate would still deny it.
+ */
+describe('contactWindow across DST transitions', () => {
+  const transitions: Array<[string, string, string]> = [
+    ['Europe/London', '2026-10-24T22:00:00.000Z', 'fall back'],
+    ['America/New_York', '2026-11-01T03:00:00.000Z', 'fall back'],
+    ['Australia/Lord_Howe', '2026-04-04T13:00:00.000Z', 'fall back (30 min)'],
+    ['Europe/London', '2026-03-28T22:00:00.000Z', 'spring forward'],
+    ['America/New_York', '2026-03-08T03:00:00.000Z', 'spring forward'],
+  ];
+
+  it.each(transitions)('%s %s: the reopen time is actually outside quiet hours', (tz, nowIso) => {
+    const window = contactWindow(nowIso, tz, quietHours);
+    expect(window.allowedNow).toBe(false);
+    expect(window.nextAllowedAt).not.toBeNull();
+    // the answer must survive being fed back in — this is the whole contract
+    expect(contactWindow(window.nextAllowedAt!, tz, quietHours).allowedNow).toBe(true);
+  });
+
+  it.each(transitions)('%s %s: and the minute before it is still inside', (tz, nowIso) => {
+    const window = contactWindow(nowIso, tz, quietHours);
+    const oneMinuteEarlier = new Date(
+      new Date(window.nextAllowedAt!).getTime() - 60_000,
+    ).toISOString();
+    // proves it is the true boundary, not merely some later allowed moment
+    expect(contactWindow(oneMinuteEarlier, tz, quietHours).allowedNow).toBe(false);
+  });
+});
+
+/**
+ * A delay window is a multiple of 24h, so it preserves the customer's local
+ * hour. A case denied at 02:28 IST for quiet hours and rescheduled a day out
+ * woke at 02:28 and was denied again — and a reopen time computed for *now*
+ * cannot see that, because the collision is with a future night. The window
+ * has to be evaluated AT the resolved moment.
+ */
+describe('deferContactPastQuietHours', () => {
+  const IST_TZ = 'Asia/Kolkata';
+  const overnight = { startHour: 21, endHour: 9 };
+  // 20:58 UTC = 02:28 IST, inside 21:00-09:00
+  const inQuietTomorrow = '2026-08-26T20:58:00.000Z';
+
+  it('pushes a reminder that lands in a future quiet period out of it', () => {
+    const deferred = deferContactPastQuietHours(
+      { type: 'schedule_reminder', remindAt: inQuietTomorrow, note: 'follow up' },
+      IST_TZ,
+      overnight,
+    );
+    if (deferred.type !== 'schedule_reminder') throw new Error('unreachable');
+    expect(deferred.remindAt).not.toBe(inQuietTomorrow);
+    expect(contactWindow(deferred.remindAt, IST_TZ, overnight).allowedNow).toBe(true);
+  });
+
+  it('pushes a mandate debit too — it sends the pre-debit notice', () => {
+    const deferred = deferContactPastQuietHours(
+      { type: 'schedule_mandate_reexecution', scheduleAt: inQuietTomorrow },
+      IST_TZ,
+      overnight,
+    );
+    if (deferred.type !== 'schedule_mandate_reexecution') throw new Error('unreachable');
+    expect(contactWindow(deferred.scheduleAt, IST_TZ, overnight).allowedNow).toBe(true);
+  });
+
+  it('leaves a moment that is already permitted untouched', () => {
+    const fine = '2026-08-26T06:00:00.000Z'; // 11:30 IST
+    const deferred = deferContactPastQuietHours(
+      { type: 'schedule_reminder', remindAt: fine, note: 'n' },
+      IST_TZ,
+      overnight,
+    );
+    if (deferred.type !== 'schedule_reminder') throw new Error('unreachable');
+    expect(deferred.remindAt).toBe(fine);
+  });
+
+  it('leaves mark_wait alone — waiting contacts nobody', () => {
+    const action = {
+      type: 'mark_wait',
+      waitUntil: inQuietTomorrow,
+      waitingFor: 'payment',
+    } as const;
+    expect(deferContactPastQuietHours(action, IST_TZ, overnight)).toEqual(action);
   });
 });

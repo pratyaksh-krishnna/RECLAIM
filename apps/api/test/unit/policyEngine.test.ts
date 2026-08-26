@@ -25,7 +25,7 @@ function baseRequest(overrides: Partial<PolicyRequest> = {}): PolicyRequest {
     lastAttemptAt: null,
     emailsSentLast14d: 0,
     agentInvocationCount: 2,
-    caseAgeHours: 5,
+    hoursWithoutProgress: 5,
     preDebitNotificationScheduledFor: null,
     ...overrides,
   };
@@ -129,7 +129,13 @@ describe('policy engine — budgets, financial limits, confidence, loops', () =>
   it('low confidence with high exposure requires approval', () => {
     const r = evaluate(baseRequest({ strategyConfidence: 0.4, amountDue: 1_200_000 }));
     expect(r.verdict).toBe('REQUIRE_APPROVAL');
-    expect(r.reason).toContain('confidence');
+    // Asserted on the trace, not on `reason`. The default fixture action is a
+    // send_email carrying a live {{payment_link}}, which is a money action, so
+    // autonomous_amount_cap now also requires approval and — being an earlier
+    // category — owns the summary reason. The confidence gate still fired.
+    expect(r.ruleTrace).toContainEqual(
+      expect.objectContaining({ ruleId: 'confidence_gate', outcome: 'require_approval' }),
+    );
   });
   it('low confidence with low exposure is allowed', () => {
     expect(evaluate(baseRequest({ strategyConfidence: 0.4, amountDue: 50_000 })).verdict).toBe('ALLOW');

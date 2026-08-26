@@ -29,7 +29,17 @@ export const PolicyRequest = z.object({
   lastAttemptAt: z.string().datetime().nullable(),
   emailsSentLast14d: z.number().int().nonnegative(),
   agentInvocationCount: z.number().int().nonnegative(),
-  caseAgeHours: z.number().nonnegative(),
+  /**
+   * Hours since the case last MOVED, not since it opened.
+   *
+   * loop_guard_age is described as "max case age without progress" and the
+   * config key is maxCaseAgeHoursWithoutProgress, but this used to carry total
+   * age from openedAt — so at 96 hours every case was denied every action
+   * regardless of how active it was, which for a 90-day B2B receivable is most
+   * of its life. The orchestrator's own stall check already measured from
+   * lastProgressAt; this now agrees with it.
+   */
+  hoursWithoutProgress: z.number().nonnegative(),
   /** exists when a pre-debit notification job has been scheduled for a pending mandate re-execution */
   preDebitNotificationScheduledFor: z.string().datetime().nullable(),
 });

@@ -34,6 +34,16 @@ export interface RuntimeOptions {
 
 export class InProcessRuntime {
   private queue: Job[] = [];
+  /**
+   * Virtual time. Running a delayed job "immediately" means asserting its delay
+   * elapsed, so the clock every dep reads has to agree — otherwise a pre-debit
+   * notice sent one statement earlier looks zero hours old to the debit that
+   * is supposed to follow it by a day, and the safety check that compares the
+   * two timestamps fires on a schedule the test never intended to compress.
+   */
+  private clockOffsetMs = 0;
+  private readonly now = (): Date =>
+    new Date((this.opts.now?.() ?? new Date()).getTime() + this.clockOffsetMs);
   readonly orchestratorDeps: OrchestratorDeps;
   readonly agentDeps: AgentDeps;
   readonly toolDeps: ToolDeps;
@@ -53,13 +63,13 @@ export class InProcessRuntime {
         this.queue.push({ kind: 'tool', ...j });
       },
       evaluatePolicy: (tx, caseRow, interventionId) =>
-        evaluateAndPersistPolicy(tx, caseRow, interventionId, this.opts.now),
+        evaluateAndPersistPolicy(tx, caseRow, interventionId, this.now),
       loopGuards: async () => {
         const { config } = await getActivePolicy(this.db);
         return config.loopGuards;
       },
       ...(this.opts.rng ? { rng: this.opts.rng } : {}),
-      ...(this.opts.now ? { now: this.opts.now } : {}),
+      now: this.now,
     };
     this.agentDeps = {
       llm: this.opts.llm,
@@ -69,7 +79,7 @@ export class InProcessRuntime {
       enqueueAgent: async (j) => {
         this.queue.push({ kind: 'agent', ...j });
       },
-      ...(this.opts.now ? { now: this.opts.now } : {}),
+      now: this.now,
     };
     this.toolDeps = {
       provider: this.opts.provider,
@@ -80,7 +90,7 @@ export class InProcessRuntime {
       enqueueAgent: async (j) => {
         this.queue.push({ kind: 'agent', ...j });
       },
-      ...(this.opts.now ? { now: this.opts.now } : {}),
+      now: this.now,
     };
   }
 
@@ -121,6 +131,10 @@ export class InProcessRuntime {
         return;
       case 'scheduled': {
         if (!this.opts.runScheduledImmediately && job.delayMs > 0) return; // parked (real runtime uses BullMQ delay)
+        // time-compression: the delay is being skipped, so advance the clock by
+        // it rather than pretending both the notice and the debit happened at
+        // the same instant
+        if (job.delayMs > 0) this.clockOffsetMs += job.delayMs;
         if (job.job.kind === 'mandate_execution') {
           await executeScheduledMandateDebit(this.db, this.toolDeps, {
             caseId: job.job.caseId,

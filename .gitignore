@@ -42,3 +42,6 @@ logs/
 .idea/
 .vscode/
 *.swp
+
+# infrastructure notes — local only
+infrastructure.md

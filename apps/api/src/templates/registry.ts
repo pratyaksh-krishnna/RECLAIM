@@ -123,6 +123,20 @@ export const DEFAULT_FREE_FILLS: Record<string, string> = {
 export class TemplateRenderError extends Error {}
 
 /**
+ * Whether a skeleton declares the server-injected {{payment_link}} slot.
+ *
+ * Lives here because it is a question about the registry, and because three
+ * places need the same answer: the tool that mints the link, the policy engine
+ * (an email carrying a live link is a collection attempt, not just contact),
+ * and the case context (an outstanding link is a fact the agent reasons about).
+ * A hand-written list of template ids is what let payment_link_delivery fall
+ * through the first time.
+ */
+export function needsPaymentLink(skeleton: TemplateSkeleton): boolean {
+  return skeleton.slots.some((slot) => slot.kind === 'immutable' && slot.name === 'payment_link');
+}
+
+/**
  * THE definition of what makes a set of free-slot fills acceptable. Both gates
  * call this: the agent runner before an output is accepted, and renderTemplate
  * at execution time.

@@ -5,10 +5,11 @@ import {
   TEMPLATE_REGISTRY,
   TemplateRenderError,
   formatINR,
+  needsPaymentLink,
   renderTemplate,
   validateFreeFills,
 } from '../../src/templates/registry.js';
-import { buildImmutableValues, needsPaymentLink } from '../../src/tools/execute.js';
+import { buildImmutableValues } from '../../src/tools/execute.js';
 
 /** immutable values the payment_reminder skeleton needs to render at all */
 const IMMUTABLES_FOR_REMINDER = {

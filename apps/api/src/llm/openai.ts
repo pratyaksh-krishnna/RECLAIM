@@ -46,6 +46,11 @@ export class OpenAiLlmClient implements LlmClient {
       // the Anthropic adapter's 1024 would be spent thinking and the answer
       // truncated before the tool call is emitted.
       max_output_tokens: args.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+      // The Responses API retains prompts for 30 days by default. Agent input
+      // carries verbatim customer email text, names, invoice ids and amounts,
+      // and the Anthropic path retains nothing — so leaving this on would make
+      // the provider choice a data-handling decision, which it must not be.
+      store: false,
       instructions: args.system,
       input: JSON.stringify(args.input, null, 2),
       tools: [

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ActionParams,
   DELAY_WINDOW_HOURS,
+  InterveneActionParams,
   ProposedActionParams,
   resolveProposedAction,
 } from '@reclaim/shared';
@@ -141,5 +142,30 @@ describe('resolveProposedAction', () => {
         true,
       );
     }
+  });
+});
+
+describe('operators propose through the same narrowed template set', () => {
+  const base = {
+    type: 'send_email',
+    language: 'en',
+    toneRegister: 'formal',
+    slotFills: {},
+  } as const;
+
+  it('POST /intervene rejects pre_debit_notice, as the agent catalog does', () => {
+    // it used to be accepted, pass the policy gate, and die at the tool
+    expect(
+      InterveneActionParams.safeParse({ ...base, templateId: 'pre_debit_notice' }).success,
+    ).toBe(false);
+  });
+
+  it('but operators keep absolute dates — a human knows what time it is', () => {
+    const r = InterveneActionParams.safeParse({
+      type: 'schedule_reminder',
+      remindAt: '2026-09-01T00:00:00.000Z',
+      note: 'follow up',
+    });
+    expect(r.success).toBe(true);
   });
 });

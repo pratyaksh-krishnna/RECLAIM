@@ -1,7 +1,7 @@
 import { Router, json, type Request, type Response } from 'express';
 import { and, asc, desc, eq, inArray, notInArray } from 'drizzle-orm';
 import { z } from 'zod';
-import { ActionParams, CaseState, PolicyConfig, TERMINAL_STATES } from '@reclaim/shared';
+import { CaseState, InterveneActionParams, PolicyConfig, TERMINAL_STATES } from '@reclaim/shared';
 import type { Db } from '../db/client.js';
 import {
   agentDecisions,
@@ -284,7 +284,7 @@ export function makeApiRouter(deps: ApiDeps): Router {
     }),
   );
 
-  const InterveneBody = z.object({ action: ActionParams });
+  const InterveneBody = z.object({ action: InterveneActionParams });
   router.post(
     '/recovery/cases/:id/intervene',
     requireRole('operator'),

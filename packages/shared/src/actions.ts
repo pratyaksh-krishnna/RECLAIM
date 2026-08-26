@@ -164,11 +164,7 @@ export const ProposedMarkWait = z.object({
  * move as removing the datetime fields above. What a schema cannot express
  * cannot be retried, escalated, or argued with.
  */
-export const AgentTemplateId = z.enum([
-  'payment_failed_notice',
-  'payment_link_delivery',
-  'payment_reminder',
-]);
+export const AgentTemplateId = TemplateId.exclude(['pre_debit_notice']);
 export type AgentTemplateId = z.infer<typeof AgentTemplateId>;
 
 export const ProposedSendEmail = SendEmail.extend({ templateId: AgentTemplateId });
@@ -214,6 +210,14 @@ const PRE_DEBIT_SAFETY_MARGIN_HOURS = 2;
  * tool, because the policy engine evaluates the proposal before execution and
  * needs a concrete datetime to evaluate.
  */
+/**
+ * Note what this does NOT do: it knows nothing about quiet hours. Every window
+ * but same_day is a multiple of 24h and so preserves the customer's local
+ * hour, which means a resolved moment can land inside a FUTURE quiet period —
+ * something a reopen time computed for *now* cannot describe. Deferring past
+ * that is deferContactPastQuietHours in policy/engine.ts, which owns the one
+ * definition of the window.
+ */
 export function resolveProposedAction(
   action: ProposedActionParams,
   now: Date,
@@ -238,6 +242,28 @@ export function resolveProposedAction(
       return action;
   }
 }
+
+/**
+ * What a human operator may propose through POST /intervene.
+ *
+ * The execution catalog minus the one template send_email cannot render.
+ * ActionParams still accepts it — schedule_mandate_reexecution sends it — but
+ * an operator submitting send_email + pre_debit_notice would sail through the
+ * policy gate and die at the tool, which is the same stranded case that
+ * removing it from the agent catalog was meant to prevent. Operators keep
+ * absolute dates: a human knows what time it is.
+ */
+export const InterveneActionParams = z.discriminatedUnion('type', [
+  ScheduleMandateReexecution,
+  CreatePaymentLink,
+  SendEmail.extend({ templateId: AgentTemplateId }),
+  ScheduleReminder,
+  RecordPromiseToPay,
+  EscalateToHuman,
+  StopWorkflow,
+  MarkWait,
+]);
+export type InterveneActionParams = z.infer<typeof InterveneActionParams>;
 
 /** Actions permitted regardless of case state or policy outcome. */
 export const ALWAYS_ALLOWED_ACTIONS: readonly ActionType[] = [

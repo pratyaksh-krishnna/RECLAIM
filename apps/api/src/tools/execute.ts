@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, isNotNull } from 'drizzle-orm';
-import { ActionParams, CanonicalEvent, type TemplateSkeleton } from '@reclaim/shared';
+import { ActionParams, CanonicalEvent } from '@reclaim/shared';
 import type { Db, Tx } from '../db/client.js';
 import {
   communications,
@@ -14,6 +14,7 @@ import {
   toolExecutions,
 } from '../db/schema.js';
 import { writeAudit } from '../audit/audit.js';
+import { getActivePolicy } from '../policy/service.js';
 import type { Mailer } from '../mailer/index.js';
 import type { PaymentProvider } from '../payments/index.js';
 import { lockCase, transitionCase, type CaseRow } from '../orchestrator/caseService.js';
@@ -21,9 +22,12 @@ import { isTerminal } from '../orchestrator/fsm.js';
 import {
   DEFAULT_FREE_FILLS,
   TEMPLATE_REGISTRY,
+  TemplateRenderError,
   formatDateIST,
   formatINR,
+  needsPaymentLink,
   renderTemplate,
+  validateFreeFills,
 } from '../templates/registry.js';
 
 /**
@@ -268,7 +272,18 @@ async function runTool(
       const method = mandate ?? emandate;
       if (!method?.mandateRef) throw new ToolAuthorizationError('no active mandate on file');
 
-      const scheduleAt = new Date(action.scheduleAt);
+      // The proposal fixed scheduleAt with a 2h margin over the notice period,
+      // assuming it would execute immediately. It may have sat in the approval
+      // inbox for hours instead, and the notice only goes out now — so measure
+      // the period from THIS moment and push the debit back if the approved
+      // time no longer clears it. Latency can delay a debit; it must never
+      // shorten the notice.
+      const { config: policyAtExecution } = await getActivePolicy(db);
+      const earliestLegalDebit = new Date(
+        now().getTime() + policyAtExecution.preDebitNoticeHours * 3_600_000,
+      );
+      const requested = new Date(action.scheduleAt);
+      const scheduleAt = requested < earliestLegalDebit ? earliestLegalDebit : requested;
       // 1) mandatory pre-debit notice FIRST — deterministic template, no free slots
       const skeleton = TEMPLATE_REGISTRY['pre_debit_notice']!;
       const rendered = renderTemplate(
@@ -313,6 +328,19 @@ async function runTool(
             extra: { waitUntil: new Date(scheduleAt.getTime() + 86_400_000) },
           });
         }
+        if (scheduleAt.getTime() !== requested.getTime()) {
+          await writeAudit(tx, {
+            caseId: caseRow.id,
+            actorType: 'system',
+            eventType: 'mandate.debit_deferred_for_notice',
+            payload: {
+              interventionId: ctx.intervention.id,
+              requested: requested.toISOString(),
+              scheduledAt: scheduleAt.toISOString(),
+              preDebitNoticeHours: policyAtExecution.preDebitNoticeHours,
+            },
+          });
+        }
         await markExecuted(tx, ctx, now, { scheduledAt: scheduleAt.toISOString(), noticeMessageId: sent.providerMessageId });
       });
       // 2) only AFTER the notice exists: schedule the execution job
@@ -347,6 +375,15 @@ async function runTool(
       // ever supplied it — so an agent naming it here stranded the case with
       // "missing immutable slot value 'payment_link'". A hand-maintained list
       // is what allowed that; asking the template cannot go out of date.
+      const freeFills = { ...DEFAULT_FREE_FILLS, ...action.slotFills };
+      // Lint BEFORE calling the provider. This used to run only inside
+      // renderTemplate, below the link creation — so an email rejected for a
+      // bad fill had already minted a live, payable link, and the retry minted
+      // another, against an API that accepts no idempotency key. Nothing
+      // downstream cancels them.
+      const fillProblems = validateFreeFills(skeleton, freeFills);
+      if (fillProblems.length > 0) throw new TemplateRenderError(fillProblems.join('; '));
+
       let paymentLink: { providerLinkId: string; shortUrl: string } | null = null;
       if (needsPaymentLink(skeleton)) {
         paymentLink = await deps.provider.createPaymentLink({
@@ -360,8 +397,9 @@ async function runTool(
         });
         immutableValues['payment_link'] = paymentLink.shortUrl;
       }
-      // defense in depth: fills were linted at agent time; lint again here
-      const rendered = renderTemplate(skeleton, immutableValues, { ...DEFAULT_FREE_FILLS, ...action.slotFills });
+      // defense in depth: linted at agent time and again above; renderTemplate
+      // re-runs the same check plus the immutable-slot coverage check
+      const rendered = renderTemplate(skeleton, immutableValues, freeFills);
       const sent = await deps.mailer.send({
         to: { name: customer.name, email: customer.email },
         subject: rendered.subject,
@@ -386,6 +424,10 @@ async function runTool(
           providerMessageId: sent.providerMessageId,
           sentAt: now(),
         });
+        // An email carrying a live payment link IS a recovery attempt. Without
+        // this the invoice attempt cap and the 24h spacing rule never saw it,
+        // so a second payable link could be minted for the same invoice.
+        if (paymentLink) await bumpAttemptCounters(tx, fresh, now);
         if (fresh.state === 'executing') {
           await transitionCase(tx, fresh, 'waiting', {
             reason: 'email sent; awaiting response or payment',
@@ -500,15 +542,6 @@ async function runTool(
   }
 }
 
-/**
- * Whether a skeleton declares the server-injected {{payment_link}} slot. The
- * send_email path and its test both ask this one question, so they cannot
- * drift apart the way the old hand-written template list did.
- */
-export function needsPaymentLink(skeleton: TemplateSkeleton): boolean {
-  return skeleton.slots.some((s) => s.kind === 'immutable' && s.name === 'payment_link');
-}
-
 /** Exported for the coverage test in test/unit/templates.test.ts. */
 export function buildImmutableValues(
   templateId: string,
@@ -546,13 +579,28 @@ export async function executeScheduledMandateDebit(
       .from(communications)
       .where(and(eq(communications.caseId, args.caseId), eq(communications.templateId, 'pre_debit_notice')))
       .limit(1);
-    if (!notice?.sentAt) {
-      await transitionCase(tx, caseRow, 'escalated', { reason: 'SAFETY: mandate execution without pre-debit notice' });
+    // Existence was not enough. A notice sent 16h before the debit satisfies
+    // "a notice exists" and still breaks the rule it exists to satisfy, so the
+    // LEAD TIME is what gets checked — the last gate before money moves, and
+    // the only one that sees both timestamps.
+    const noticeLeadHours = notice?.sentAt ? (now().getTime() - notice.sentAt.getTime()) / 3_600_000 : null;
+    const requiredLeadHours = (await getActivePolicy(tx)).config.preDebitNoticeHours;
+    if (noticeLeadHours === null || noticeLeadHours < requiredLeadHours) {
+      const reason =
+        noticeLeadHours === null
+          ? 'SAFETY: mandate execution without pre-debit notice'
+          : `SAFETY: pre-debit notice only ${noticeLeadHours.toFixed(1)}h old, needs ${requiredLeadHours}h`;
+      await transitionCase(tx, caseRow, 'escalated', { reason });
       await writeAudit(tx, {
         caseId: args.caseId,
         actorType: 'system',
         eventType: 'safety.mandate_blocked_no_notice',
-        payload: { interventionId: args.interventionId },
+        payload: {
+          interventionId: args.interventionId,
+          noticeSentAt: notice?.sentAt?.toISOString() ?? null,
+          noticeLeadHours,
+          requiredLeadHours,
+        },
       });
       return { kind: 'blocked' as const };
     }

@@ -97,7 +97,11 @@ export async function evaluateAndPersistPolicy(
     lastAttemptAt: caseRow.lastAttemptAt?.toISOString() ?? null,
     emailsSentLast14d: emails.length,
     agentInvocationCount: caseRow.agentInvocationCount,
-    caseAgeHours: (nowDate.getTime() - caseRow.openedAt.getTime()) / 3_600_000,
+    // clamped: lastProgressAt is written by whichever clock made the transition,
+    // and a worker, an API request and a time-compressed runtime need not agree
+    // to the millisecond. A case cannot have been stalled for negative hours,
+    // and skew must not turn a loop-guard input into a schema violation.
+    hoursWithoutProgress: Math.max(0, (nowDate.getTime() - caseRow.lastProgressAt.getTime()) / 3_600_000),
     preDebitNotificationScheduledFor: null,
   });
 

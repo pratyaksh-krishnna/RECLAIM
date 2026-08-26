@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { z } from 'zod';
+import type { PolicyConfig } from '@reclaim/shared';
 import {
   CanonicalEvent,
   CommunicationOutput,
@@ -24,6 +25,7 @@ import {
   recoveryCases,
 } from '../db/schema.js';
 import { writeAudit } from '../audit/audit.js';
+import { deferContactPastQuietHours } from '../policy/engine.js';
 import { getActivePolicy } from '../policy/service.js';
 import type { LlmClient } from '../llm/index.js';
 import { lockCase, transitionCase, type CaseRow } from '../orchestrator/caseService.js';
@@ -86,14 +88,26 @@ export async function runAgentJob(
     const [caseRow] = await tx.select().from(recoveryCases).where(eq(recoveryCases.id, job.caseId)).limit(1);
     if (!caseRow) return null;
     if (isTerminal(caseRow.state) || caseRow.holdoutArm === 'holdout') return null; // agents NEVER run on holdout
-    const context = await buildCaseContext(tx, caseRow, now);
+    // read once and carry it: this used to be queried here, again when the
+    // proposal was resolved, and a third time by the policy gate
+    const { config } = await getActivePolicy(tx);
+    const context = await buildCaseContext(tx, caseRow, now, config);
     const input = await buildAgentInput(tx, job, caseRow, context);
-    return { caseRow, context, input };
+    return { caseRow, context, config, input };
   });
   if (!prep) return;
 
   const spec = SPECS[job.agent];
-  const jsonSchema = zodToJsonSchema(spec.zod, { target: 'jsonSchema7' }) as Record<string, unknown>;
+  // $refStrategy 'none' because the schema is handed to a model, not to a
+  // validator. Reusing one DelayWindow across three action variants made
+  // zod-to-json-schema collapse them into a pointer at a sibling property path
+  // — the strategy schema was the only agent schema containing a $ref — and a
+  // model that cannot resolve it never sees the enum, emits a free-form
+  // string, and fails the Zod gate twice.
+  const jsonSchema = zodToJsonSchema(spec.zod, {
+    target: 'jsonSchema7',
+    $refStrategy: 'none',
+  }) as Record<string, unknown>;
   const system = PROMPTS[job.agent].system;
 
   // call with one retry on schema/lint failure
@@ -170,7 +184,7 @@ export async function runAgentJob(
       }
       return;
     }
-    await postProcess(tx, deps, job, caseRow, parsed, now, (fn) => pending.push(fn));
+    await postProcess(tx, deps, job, caseRow, parsed, now, prep, (fn) => pending.push(fn));
   });
 
   // enqueues deferred until after the commit so a rollback never leaves ghost jobs
@@ -297,6 +311,7 @@ async function postProcess(
   caseRow: CaseRow,
   parsed: unknown,
   now: () => Date,
+  prep: { context: CaseContext; config: PolicyConfig },
   afterCommit: (fn: () => Promise<void>) => void,
 ): Promise<void> {
   switch (job.agent) {
@@ -356,10 +371,11 @@ async function postProcess(
       // against the real clock and the policy the engine is about to judge it
       // by — before the intervention is persisted, because the policy gate
       // evaluates the proposal and needs a concrete datetime to evaluate.
-      const { config } = await getActivePolicy(tx);
-      const action = resolveProposedAction(out.action, now(), {
-        preDebitNoticeHours: config.preDebitNoticeHours,
-      });
+      const action = deferContactPastQuietHours(
+        resolveProposedAction(out.action, now(), { preDebitNoticeHours: prep.config.preDebitNoticeHours }),
+        prep.context.customerTimezone,
+        prep.config.quietHours,
+      );
       const [created] = await tx
         .insert(interventions)
         .values({

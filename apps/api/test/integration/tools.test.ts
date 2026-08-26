@@ -141,6 +141,30 @@ describe('mandate re-execution safety', () => {
     expect(after!.state).toBe('escalated');
   });
 
+  it('a notice younger than the required lead time BLOCKS the debit', async () => {
+    // Existence of a notice was the whole check. A proposal fixes scheduleAt
+    // with a 2h margin over the notice period and can then sit in the approval
+    // inbox for hours, so the notice goes out late and the debit still fires
+    // on the original clock — satisfying "a notice exists" while breaking the
+    // period it exists to satisfy.
+    const { deps } = makeToolDeps();
+    const scheduleAt = new Date(Date.now() + 48 * 3_600_000).toISOString();
+    const { caseRow, intervention } = await makeExecutingCase(
+      { type: 'schedule_mandate_reexecution', scheduleAt },
+      { rail: 'upi_autopay' },
+    );
+    await executeIntervention(db, deps, { caseId: caseRow.id, interventionId: intervention.id, attempt: 1 });
+    // notice sent moments ago — deliberately NOT aged
+    const result = await executeScheduledMandateDebit(db, deps, {
+      caseId: caseRow.id,
+      interventionId: intervention.id,
+      attempt: 1,
+    });
+    expect(result.status).toBe('blocked');
+    const [after] = await db.select().from(recoveryCases).where(eq(recoveryCases.id, caseRow.id));
+    expect(after!.state).toBe('escalated');
+  });
+
   it('with the notice on file, the sandbox debit captures and emits payment.recovered', async () => {
     const { deps } = makeToolDeps();
     const scheduleAt = new Date(Date.now() + 48 * 3_600_000).toISOString();
@@ -149,6 +173,13 @@ describe('mandate re-execution safety', () => {
       { rail: 'upi_autopay' },
     );
     await executeIntervention(db, deps, { caseId: caseRow.id, interventionId: intervention.id, attempt: 1 });
+    // In production the debit job fires a day after the notice; here the two
+    // calls are back to back, so age the notice to the interval the rail
+    // actually requires rather than letting a zero-hour gap stand in for it.
+    await db
+      .update(communications)
+      .set({ sentAt: new Date(Date.now() - 25 * 3_600_000) })
+      .where(and(eq(communications.caseId, caseRow.id), eq(communications.templateId, 'pre_debit_notice')));
     const result = await executeScheduledMandateDebit(db, deps, {
       caseId: caseRow.id,
       interventionId: intervention.id,

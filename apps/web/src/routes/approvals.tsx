@@ -385,7 +385,9 @@ type ComposableType = (typeof COMPOSABLE)[number]['type'];
  * "missing immutable slot value …" — an engineering error dressed as a
  * decision, which is the exact thing the Human Inbox exists to stop showing.
  */
-const TEMPLATES = ['payment_failed_notice', 'payment_reminder'] as const;
+// every template send_email can render — payment_link_delivery included, since
+// the tool now mints the link for any template declaring the slot
+const TEMPLATES = ['payment_failed_notice', 'payment_link_delivery', 'payment_reminder'] as const;
 
 function ActionComposer({ caseId, onDone }: { caseId: string; onDone: () => void }) {
   const [type, setType] = useState<ComposableType>('create_payment_link');

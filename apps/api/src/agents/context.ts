@@ -11,6 +11,8 @@ import {
 } from '../db/schema.js';
 import { contactWindow } from '../policy/engine.js';
 import { getActivePolicy } from '../policy/service.js';
+import { TEMPLATE_REGISTRY, needsPaymentLink } from '../templates/registry.js';
+import type { PolicyConfig, TemplateId } from '@reclaim/shared';
 import type { CaseRow } from '../orchestrator/caseService.js';
 
 /**
@@ -77,7 +79,16 @@ export interface CaseContext {
   eventIds: string[];
 }
 
-export async function buildCaseContext(tx: Tx, caseRow: CaseRow, now: () => Date = () => new Date()): Promise<CaseContext> {
+export async function buildCaseContext(
+  tx: Tx,
+  caseRow: CaseRow,
+  now: () => Date = () => new Date(),
+  config?: PolicyConfig,
+): Promise<CaseContext> {
+  // One clock read for the whole snapshot. nowIso and nextContactAllowedAt are
+  // two fields the agent is asked to reason across, so they must describe the
+  // same instant rather than three consecutive calls to a moving clock.
+  const nowDate = now();
   const [customer] = await tx.select().from(customers).where(eq(customers.id, caseRow.customerId)).limit(1);
   const [invoice] = await tx.select().from(invoices).where(eq(invoices.id, caseRow.invoiceId)).limit(1);
   const [account] = await tx.select().from(accounts).where(eq(accounts.customerId, caseRow.customerId)).limit(1);
@@ -93,7 +104,7 @@ export async function buildCaseContext(tx: Tx, caseRow: CaseRow, now: () => Date
   const latest = invoiceFailures[0] ?? null;
 
   const promises = await tx.select().from(promisesToPay).where(eq(promisesToPay.customerId, caseRow.customerId));
-  const since14d = new Date(now().getTime() - 14 * 86_400_000);
+  const since14d = new Date(nowDate.getTime() - 14 * 86_400_000);
   const comms = await tx
     .select()
     .from(communications)
@@ -118,22 +129,23 @@ export async function buildCaseContext(tx: Tx, caseRow: CaseRow, now: () => Date
     .orderBy(desc(policyDecisions.createdAt))
     .limit(1);
 
-  const daysOverdue = Math.max(0, Math.floor((now().getTime() - invoice.dueDate.getTime()) / 86_400_000));
-  const { config } = await getActivePolicy(tx);
-  const window = contactWindow(now().toISOString(), customer.timezone, config.quietHours);
+  const daysOverdue = Math.max(0, Math.floor((nowDate.getTime() - invoice.dueDate.getTime()) / 86_400_000));
+  const activeConfig = config ?? (await getActivePolicy(tx)).config;
+  const nowIso = nowDate.toISOString();
+  const window = contactWindow(nowIso, customer.timezone, activeConfig.quietHours);
 
   return {
-    nowIso: now().toISOString(),
+    nowIso,
     contactAllowedNow: window.allowedNow,
     nextContactAllowedAt: window.nextAllowedAt,
     customerTimezone: customer.timezone,
     lastAttemptAt: caseRow.lastAttemptAt?.toISOString() ?? null,
     contactRules: {
-      minHoursBetweenAttempts: config.minHoursBetweenAttempts,
-      maxEmailsPerRolling14d: config.maxEmailsPerRolling14d,
-      maxRecoveryAttemptsPerInvoice: config.maxRecoveryAttemptsPerInvoice,
-      preDebitNoticeHours: config.preDebitNoticeHours,
-      quietHours: config.quietHours,
+      minHoursBetweenAttempts: activeConfig.minHoursBetweenAttempts,
+      maxEmailsPerRolling14d: activeConfig.maxEmailsPerRolling14d,
+      maxRecoveryAttemptsPerInvoice: activeConfig.maxRecoveryAttemptsPerInvoice,
+      preDebitNoticeHours: activeConfig.preDebitNoticeHours,
+      quietHours: activeConfig.quietHours,
     },
     caseId: caseRow.id,
     leakType: caseRow.leakType,
@@ -152,7 +164,14 @@ export async function buildCaseContext(tx: Tx, caseRow: CaseRow, now: () => Date
     priorFailureCount: failures.length,
     brokenPromiseCount: promises.filter((p) => p.status === 'broken').length,
     emailsSentLast14d: emails14d.length,
-    hasPaymentLinkOutstanding: comms.some((c) => c.templateId === 'payment_link_delivery'),
+    // Any template carrying {{payment_link}} leaves a payable link in the
+    // customer's inbox, not just payment_link_delivery. Keyed off that one id,
+    // this read false while a live link existed, and the agent proposed
+    // another.
+    hasPaymentLinkOutstanding: comms.some((c) => {
+      const skeleton = c.templateId ? TEMPLATE_REGISTRY[c.templateId as TemplateId] : undefined;
+      return skeleton !== undefined && needsPaymentLink(skeleton);
+    }),
     recoveryAttemptCount: caseRow.recoveryAttemptCount,
     lastDenyReason: lastDeny?.reason ?? null,
     failureEventIds: invoiceFailures.map((f) => f.id),

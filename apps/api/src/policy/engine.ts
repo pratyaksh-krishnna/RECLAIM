@@ -8,6 +8,7 @@ import {
   PolicyConfig as PolicyConfigSchema,
 } from '@reclaim/shared';
 import { isRetryableClass } from '../domain/declineTable.js';
+import { TEMPLATE_REGISTRY, needsPaymentLink } from '../templates/registry.js';
 import { DEFAULT_POLICY_CONFIG } from './defaults.js';
 
 /**
@@ -17,11 +18,25 @@ import { DEFAULT_POLICY_CONFIG } from './defaults.js';
  * sticky unless a later rule denies.
  */
 
-/** Actions that attempt to collect money. */
-const MONEY_ACTIONS: ReadonlySet<ActionParams['type']> = new Set([
+/** Actions that attempt to collect money, by type alone. */
+const MONEY_ACTION_TYPES: ReadonlySet<ActionParams['type']> = new Set([
   'schedule_mandate_reexecution',
   'create_payment_link',
 ]);
+
+/**
+ * Whether an action is an attempt to collect money.
+ *
+ * send_email is not inherently one — but payment_reminder and
+ * payment_failed_notice now carry a live {{payment_link}}, which makes them
+ * collection attempts wearing an email's clothes. Keying off the type alone
+ * let them slip past the invoice attempt cap and the 24h spacing rule, so a
+ * second payable link could be minted for an invoice that already had one.
+ */
+function isMoneyAction(action: ActionParams): boolean {
+  if (MONEY_ACTION_TYPES.has(action.type)) return true;
+  return action.type === 'send_email' && needsPaymentLink(TEMPLATE_REGISTRY[action.templateId]);
+}
 /** Actions that contact the customer by email (link delivery includes an email). */
 const CONTACT_ACTIONS: ReadonlySet<ActionParams['type']> = new Set([
   'send_email',
@@ -29,17 +44,30 @@ const CONTACT_ACTIONS: ReadonlySet<ActionParams['type']> = new Set([
   'schedule_mandate_reexecution', // sends the mandatory pre-debit notice email
 ]);
 
-export function localHour(nowIso: string, timeZone: string): number {
-  return localHourMinute(nowIso, timeZone).hour;
+export function localHour(nowIso: string, timeZone: string): number | null {
+  const fmt = localFormatter(timeZone);
+  return fmt ? localHourMinute(new Date(nowIso), fmt).hour : null;
 }
 
-function localHourMinute(nowIso: string, timeZone: string): { hour: number; minute: number } {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    hour: 'numeric',
-    minute: 'numeric',
-    hourCycle: 'h23',
-  }).formatToParts(new Date(nowIso));
+/**
+ * Built once and reused: resolving a contact window walks the clock forward a
+ * minute at a time, and constructing a formatter per step is the expensive part.
+ */
+function localFormatter(timeZone: string): Intl.DateTimeFormat | null {
+  try {
+    return new Intl.DateTimeFormat('en-US', { timeZone, hour: 'numeric', minute: 'numeric', hourCycle: 'h23' });
+  } catch {
+    // customers.timezone is unvalidated text; only the seed path guarantees an
+    // IANA id. Since this moved into buildCaseContext it runs for EVERY agent
+    // call, so one bad row ('IST', 'GMT+5:30') threw inside the read
+    // transaction and killed every agent for that customer with no decision
+    // row and no escalation.
+    return null;
+  }
+}
+
+function localHourMinute(at: Date, fmt: Intl.DateTimeFormat): { hour: number; minute: number } {
+  const parts = fmt.formatToParts(at);
   const get = (type: string): number => Number(parts.find((p) => p.type === type)?.value ?? 0);
   return { hour: get('hour'), minute: get('minute') };
 }
@@ -50,7 +78,8 @@ function inQuietHours(hour: number, startHour: number, endHour: number): boolean
 
 export interface ContactWindow {
   allowedNow: boolean;
-  localHour: number;
+  /** null when the customer's timezone could not be read */
+  localHour: number | null;
   /** when contact becomes permitted again; null when it already is */
   nextAllowedAt: string | null;
 }
@@ -73,20 +102,72 @@ export function contactWindow(
   timeZone: string,
   quietHours: { startHour: number; endHour: number },
 ): ContactWindow {
-  const { hour, minute } = localHourMinute(nowIso, timeZone);
-  if (!inQuietHours(hour, quietHours.startHour, quietHours.endHour)) {
-    return { allowedNow: true, localHour: hour, nextAllowedAt: null };
-  }
-  // Elapsed minutes until the window ends, measured from local wall-clock
-  // rather than by rebuilding a local date — a zone offset by a half hour
-  // (IST is UTC+5:30) must still land on the hour, not thirty minutes past it.
+  const fmt = localFormatter(timeZone);
+  // Fail CLOSED. Falling back to UTC would silently permit contact at 23:00 in
+  // the customer's actual evening; refusing contact stalls nothing, because
+  // the agent still runs and escalate_to_human is always allowed — which is
+  // the right destination for a customer row with an unusable timezone.
+  if (!fmt) return { allowedNow: false, localHour: null, nextAllowedAt: null };
+  const start = new Date(nowIso);
+  const { hour, minute } = localHourMinute(start, fmt);
+  const isQuiet = (at: Date): boolean =>
+    inQuietHours(localHourMinute(at, fmt).hour, quietHours.startHour, quietHours.endHour);
+
+  if (!isQuiet(start)) return { allowedNow: true, localHour: hour, nextAllowedAt: null };
+
+  // Elapsed minutes until the window ends, measured from local wall-clock so a
+  // zone offset by a half hour (IST is UTC+5:30) lands on the hour rather than
+  // thirty minutes past it.
   const minutesToEnd = ((quietHours.endHour - hour + 24) % 24) * 60 - minute;
-  const wait = minutesToEnd > 0 ? minutesToEnd : minutesToEnd + 24 * 60;
-  return {
-    allowedNow: false,
-    localHour: hour,
-    nextAllowedAt: new Date(new Date(nowIso).getTime() + wait * 60_000).toISOString(),
+  const estimate = start.getTime() + (minutesToEnd > 0 ? minutesToEnd : minutesToEnd + 24 * 60) * 60_000;
+
+  // …and then VERIFIED, because that arithmetic adds wall-clock minutes to a
+  // UTC instant, which is wrong by an hour across a DST change. Fall-back
+  // lands back inside the window (London on 24 Oct estimates 08:00 GMT, still
+  // quiet) and spring-forward overshoots, throwing away an hour of contact
+  // time. Both are the agent being told contact reopens at a moment the gate
+  // will still deny — the disagreement this function exists to prevent. A
+  // one-minute scan either side of the estimate finds the true boundary.
+  const CORRECTION_MS = 90 * 60_000;
+  const earliest = Math.max(start.getTime() + 60_000, estimate - CORRECTION_MS);
+  for (let t = earliest; t <= estimate + CORRECTION_MS; t += 60_000) {
+    const candidate = new Date(t);
+    if (!isQuiet(candidate)) {
+      return { allowedNow: false, localHour: hour, nextAllowedAt: candidate.toISOString() };
+    }
+  }
+  return { allowedNow: false, localHour: hour, nextAllowedAt: new Date(estimate).toISOString() };
+}
+
+/**
+ * Push a scheduled CONTACT to the first moment it is actually permitted.
+ *
+ * Delay windows are multiples of 24h, so they preserve the customer's local
+ * hour: a case denied at 02:28 for quiet hours and rescheduled a day out woke
+ * at 02:28 and was denied again, and again. Evaluating the window AT the
+ * resolved moment is the only way to see that, and it reuses contactWindow so
+ * the deferral and the gate cannot disagree.
+ *
+ * mark_wait is untouched — waiting contacts nobody.
+ */
+export function deferContactPastQuietHours(
+  action: ActionParams,
+  timeZone: string,
+  quietHours: { startHour: number; endHour: number },
+): ActionParams {
+  const defer = (iso: string): string => {
+    const window = contactWindow(iso, timeZone, quietHours);
+    return window.allowedNow ? iso : (window.nextAllowedAt ?? iso);
   };
+  switch (action.type) {
+    case 'schedule_reminder':
+      return { ...action, remindAt: defer(action.remindAt) };
+    case 'schedule_mandate_reexecution':
+      // sends the mandatory pre-debit notice, so it is a contact too
+      return { ...action, scheduleAt: defer(action.scheduleAt) };
+    default:
+      return action;
+  }
 }
 
 type RuleOutcome = { outcome: 'pass' | 'deny' | 'require_approval' | 'skipped'; detail?: string };
@@ -129,9 +210,14 @@ const RULES: Rule[] = [
     evaluate: (req, cfg) => {
       if (!CONTACT_ACTIONS.has(req.action.type)) return { outcome: 'skipped' };
       const window = contactWindow(req.nowIso, req.customerTimezone, cfg.quietHours);
-      return window.allowedNow
-        ? { outcome: 'pass' }
-        : { outcome: 'deny', detail: `local hour ${window.localHour} is inside quiet hours` };
+      if (window.allowedNow) return { outcome: 'pass' };
+      return {
+        outcome: 'deny',
+        detail:
+          window.localHour === null
+            ? `customer timezone '${req.customerTimezone}' is not a valid IANA zone — quiet hours cannot be proven`
+            : `local hour ${window.localHour} is inside quiet hours`,
+      };
     },
   },
   {
@@ -174,7 +260,7 @@ const RULES: Rule[] = [
     category: 'rail_limits',
     description: 'global cap on recovery attempts per invoice',
     evaluate: (req, cfg) => {
-      if (!MONEY_ACTIONS.has(req.action.type)) return { outcome: 'skipped' };
+      if (!isMoneyAction(req.action)) return { outcome: 'skipped' };
       return req.recoveryAttemptCount >= cfg.maxRecoveryAttemptsPerInvoice
         ? { outcome: 'deny', detail: `${req.recoveryAttemptCount} attempts >= cap ${cfg.maxRecoveryAttemptsPerInvoice}` }
         : { outcome: 'pass' };
@@ -185,7 +271,7 @@ const RULES: Rule[] = [
     category: 'rail_limits',
     description: 'minimum spacing between recovery attempts',
     evaluate: (req, cfg) => {
-      if (!MONEY_ACTIONS.has(req.action.type) || !req.lastAttemptAt) return { outcome: 'skipped' };
+      if (!isMoneyAction(req.action) || !req.lastAttemptAt) return { outcome: 'skipped' };
       const hours = (new Date(req.nowIso).getTime() - new Date(req.lastAttemptAt).getTime()) / 3_600_000;
       return hours < cfg.minHoursBetweenAttempts
         ? { outcome: 'deny', detail: `${hours.toFixed(1)}h since last attempt < ${cfg.minHoursBetweenAttempts}h` }
@@ -233,7 +319,7 @@ const RULES: Rule[] = [
     category: 'financial_limits',
     description: 'agent-proposed money actions above the autonomous cap require human approval',
     evaluate: (req, cfg) => {
-      if (!MONEY_ACTIONS.has(req.action.type) || req.proposedBy !== 'agent') return { outcome: 'skipped' };
+      if (!isMoneyAction(req.action) || req.proposedBy !== 'agent') return { outcome: 'skipped' };
       return req.amountDue > cfg.autonomousAmountCapPaise
         ? { outcome: 'require_approval', detail: `amount ${req.amountDue} > autonomous cap ${cfg.autonomousAmountCapPaise}` }
         : { outcome: 'pass' };
@@ -294,7 +380,7 @@ const RULES: Rule[] = [
     category: 'loop_guards',
     description: 'max case age without progress',
     evaluate: (req, cfg) =>
-      req.caseAgeHours >= cfg.loopGuards.maxCaseAgeHoursWithoutProgress &&
+      req.hoursWithoutProgress >= cfg.loopGuards.maxCaseAgeHoursWithoutProgress &&
       !ALWAYS_ALLOWED_ACTIONS.includes(req.action.type)
         ? { outcome: 'deny', detail: 'case age loop guard tripped — escalate' }
         : { outcome: 'pass' },
