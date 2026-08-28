@@ -9,6 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@reclaim/api": "workspace:*",
     "@reclaim/shared": "workspace:*",
     "zod": "^3.24.1"
   },

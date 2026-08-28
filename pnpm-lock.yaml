@@ -170,6 +170,9 @@ importers:
 
   voice-testing:
     dependencies:
+      '@reclaim/api':
+        specifier: workspace:*
+        version: link:../apps/api
       '@reclaim/shared':
         specifier: workspace:*
         version: link:../packages/shared
