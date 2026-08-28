@@ -45,3 +45,6 @@ logs/
 
 # infrastructure notes — local only
 infrastructure.md
+
+# voice sandbox output — audio, never source
+voice-testing/out/
