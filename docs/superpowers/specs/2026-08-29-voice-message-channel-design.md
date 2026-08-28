@@ -32,6 +32,8 @@ number out loud.
 | Agent involvement | None beyond today's `slotFills` | No new action type, no channel choice. Every `send_email` also produces a voice note. |
 | Audio codec | `opus` (`audio/ogg`) | WhatsApp renders ogg/opus as a real voice note with a waveform; other formats appear as a file attachment. Also ~20x smaller than WAV. |
 | Audio storage | New `voice_messages` table | `routes.ts:132` does `db.select().from(communications)`, so a `bytea` column there would ship audio into every case-detail response. |
+| Inbound WhatsApp text | In scope, Phase 2 | An inbound message is what opens the 24-hour window. Without it, outbound voice is sent blind. |
+| Opt-out scope | Global, unchanged | A `STOP` on any channel sets `customers.optedOut`. Conservative, cannot under-suppress, and needs no new code. |
 
 ### Rejected alternatives
 
@@ -243,7 +245,12 @@ Added to `.env` and `.env.example`:
 SARVAM_API_KEY=
 WHATSAPP_ACCESS_TOKEN=
 WHATSAPP_PHONE_NUMBER_ID=
+WHATSAPP_VERIFY_TOKEN=
+WHATSAPP_APP_SECRET=
 ```
+
+The last two are needed only by the inbound hook in Phase 2; the sandbox does
+not use them.
 
 The sandbox reads the root `.env` with `--env-file-if-exists=../.env`, matching
 the existing script convention in `apps/api/package.json`.
@@ -253,10 +260,11 @@ the existing script convention in `apps/api/package.json`.
 ### Migration `0004`
 
 ```
-customers        + phone             text          nullable
+customers        + phone             text          nullable UNIQUE
                  + whatsapp_consent  boolean       not null default false
 
-communications     channel           enum widened to ['email','whatsapp_voice']
+communications     channel           enum widened to
+                                     ['email','whatsapp_text','whatsapp_voice']
 
 voice_messages   (new)
                    id                uuid pk default random
@@ -274,6 +282,17 @@ no subject.
 
 `whatsapp_consent` defaults to **false**. Reusing `email_consent` would grant a
 channel the customer never agreed to.
+
+`phone` is **unique**, for the same reason `customers.email` is. The comment
+above that column records a real incident: two rows shared an address, and a
+reply resolved to whichever row Postgres returned first, delivering a customer's
+opt-out to a stale closed case. The inbound WhatsApp webhook resolves a customer
+by phone and would reproduce that defect exactly. Nullable, because most
+customers have no number on file and a `NULL` does not collide under a unique
+index.
+
+The channel enum takes **three** values, not two. Inbound text and outbound
+voice are different things and must be distinguishable in the timeline.
 
 `Channel` in `packages/shared/src/enums.ts` widens to match.
 
@@ -307,6 +326,57 @@ Therefore:
 intervention. The voice note is the same contact to the same customer at the
 same moment; counting it separately would wrongly tighten the 24-hour spacing
 rule and the per-invoice attempt cap.
+
+### Inbound WhatsApp text
+
+The reply pipeline is already channel-agnostic below its entry point.
+`POST /webhooks/inbound-email` (`webhookRouter.ts:86`) writes an inbound
+`communications` row and emits `customer.responded`; `orchestrator.ts:146`
+enqueues `reply_interpreter` with the `communicationId`, which classifies the
+text into the closed `ReplyIntent` set. Only three things in that path are
+email-specific: the request schema, `where(eq(customers.email, ...))`, and the
+hardcoded `channel: 'email'`.
+
+So `POST /webhooks/whatsapp` is a sibling of the existing hook, not a new
+subsystem:
+
+- `GET` handles Meta's subscription challenge (`hub.mode`, `hub.verify_token`,
+  `hub.challenge`) against `WHATSAPP_VERIFY_TOKEN`.
+- `POST` verifies Meta's `X-Hub-Signature-256` HMAC against
+  `WHATSAPP_APP_SECRET`, following the pattern already in
+  `ingest/verifySignature.ts`.
+- It resolves the customer by `phone`, writes `channel: 'whatsapp_text'`,
+  `direction: 'inbound'`, and emits the same `customer.responded` event.
+
+Everything downstream is untouched: intent classification, promise-to-pay date
+extraction, dispute handling, and opt-out all work as they do for email.
+
+**This is not an optional follow-on.** WhatsApp permits a freeform outbound
+message only inside a 24-hour window opened by an inbound customer message. The
+inbound hook is what records that a window opened. Without it the system cannot
+know whether a voice note is deliverable, so it would send blind and collect
+`131047` errors with no record of the cause.
+
+#### The window check
+
+Deterministic, and needs no new column: a window is open if an inbound
+`whatsapp_text` communication exists for the customer with `sent_at` within the
+last 24 hours. The existing `comms_customer_sent_idx` on
+`(customer_id, sent_at)` already serves this query.
+
+A closed window is a **skip, not a failure** — it joins `optedOut`,
+`phone == null` and `whatsappConsent == false` on the `voice.skipped` audit
+path, with reason `window_closed`. The email still goes out. Under
+`WHATSAPP_MODE=mock` the check is bypassed so the console always has audio to
+show.
+
+#### Opt-out
+
+Unchanged and deliberately global. A `STOP` arriving over WhatsApp is
+classified `opt_out` by the same interpreter, resolves to `stop_workflow`, and
+sets `customers.optedOut = true`, suppressing email as well. Per-channel
+suppression was considered and rejected: it cannot under-suppress this way, and
+it costs nothing.
 
 ### Configuration
 
@@ -357,16 +427,21 @@ they did not.
 | integration | `whatsappConsent == false` produces the email row only, plus a `voice.skipped` audit event |
 | safety | **a throwing synthesizer leaves the email sent exactly once and the intervention `executed`** — the regression guard against the double-send described above |
 | safety | `WHATSAPP_MODE=mock` performs no outbound HTTP to Meta |
+| integration | inbound `POST /webhooks/whatsapp` resolves by phone, writes a `whatsapp_text` row, and enqueues `reply_interpreter` — the same assertions the inbound-email test already makes |
+| integration | a `STOP` over WhatsApp sets `optedOut` and suppresses the next email, not just the next voice note |
+| unit | window check — open at 23h59m, closed at 24h01m, closed with no inbound at all |
+| safety | an unsigned or wrongly-signed inbound WhatsApp POST is rejected before any row is written |
 
 ## Out of scope
 
-- Inbound WhatsApp replies. The reply interpreter stays email-only; a voice
-  reply is a separate problem (speech-to-text, a new `direction='inbound'`
-  voice row, intent extraction from a transcript).
+- Inbound WhatsApp **voice** replies. Text replies are in scope (above); a
+  spoken reply is a separate problem needing speech-to-text, and the intent
+  would be extracted from a transcript whose errors nothing downstream can see.
+- Business-initiated voice. Outbound voice reaches only open 24-hour windows.
+  Cold contact requires a Meta-approved message template, and template headers
+  support image/video/document but not audio — so there is no version of this
+  that reaches a customer who has never written to us.
 - Agent-chosen channel. Reconsider only if evidence shows voice helps on some
   case types and not others.
-- WhatsApp template approval for business-initiated contact. Voice reaches only
-  open 24-hour windows; widening that needs Meta template review and is a
-  product decision, not an engineering one.
 - Audio storage outside Postgres. Opus keeps a 15-second note near 15-25 KB;
   object storage is warranted only if volume proves otherwise.
