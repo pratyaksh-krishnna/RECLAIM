@@ -13,13 +13,20 @@ import { formatINRForSpeech } from './money.js';
  * Everything else is the same discipline as the email body: the agent fills
  * greeting/context_sentence/sign_off and nothing else, and every number is
  * injected by the server.
+ *
+ * NOTE the slot ORDER differs from the email body. There, {{sign_off}} sits
+ * above {{legal_footer}}, which voice does not speak — so copying that order
+ * put the sign-off in the middle of the message, dangling on its comma before
+ * the opt-out sentence ("Warm regards, If you would rather not receive…").
+ * Spoken, a sign-off has to be the last thing said, so the opt-out moves ahead
+ * of it.
  */
 export const VOICE_SCRIPTS: Record<TemplateId, string> = {
-  payment_failed_notice: `{{greeting}} {{context_sentence}} Your payment of {{amount}} for invoice {{invoice_number}} could not be processed. We have emailed you a secure payment link — please check your inbox to complete it. {{sign_off}} If you would rather not receive these messages, just reply STOP.`,
+  payment_failed_notice: `{{greeting}} {{context_sentence}} Your payment of {{amount}} for invoice {{invoice_number}} could not be processed. We have emailed you a secure payment link — please check your inbox to complete it. If you would rather not receive these messages, just reply STOP. {{sign_off}}`,
 
-  payment_link_delivery: `{{greeting}} {{context_sentence}} The amount due on invoice {{invoice_number}} is {{amount}}. We have emailed you a secure payment link — please check your inbox to complete it. {{sign_off}} If you would rather not receive these messages, just reply STOP.`,
+  payment_link_delivery: `{{greeting}} {{context_sentence}} The amount due on invoice {{invoice_number}} is {{amount}}. We have emailed you a secure payment link — please check your inbox to complete it. If you would rather not receive these messages, just reply STOP. {{sign_off}}`,
 
-  payment_reminder: `{{greeting}} {{context_sentence}} Invoice {{invoice_number}} for {{amount}} was due on {{due_date}} and is still open. We have emailed you a secure payment link — please check your inbox to complete it. {{sign_off}} If you would rather not receive these messages, just reply STOP.`,
+  payment_reminder: `{{greeting}} {{context_sentence}} Invoice {{invoice_number}} for {{amount}} was due on {{due_date}} and is still open. We have emailed you a secure payment link — please check your inbox to complete it. If you would rather not receive these messages, just reply STOP. {{sign_off}}`,
 
   // Compliance notice: no free slots, exactly like its email form.
   pre_debit_notice: `Dear {{customer_name}}. As per your active mandate, {{amount}} for invoice {{invoice_number}} will be debited on {{debit_date}}. No action is needed if you wish to proceed. To cancel this debit, use your UPI or bank app before the debit date.`,

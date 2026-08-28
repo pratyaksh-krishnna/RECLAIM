@@ -16,7 +16,8 @@
     "db:generate": "pnpm --filter @reclaim/api db:generate",
     "db:migrate": "pnpm --filter @reclaim/api db:migrate",
     "seed": "pnpm --filter @reclaim/api seed",
-    "replay": "pnpm --filter @reclaim/api replay"
+    "replay": "pnpm --filter @reclaim/api replay",
+    "voice:try": "pnpm --filter @reclaim/voice-testing try --"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
