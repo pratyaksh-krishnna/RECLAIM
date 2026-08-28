@@ -86,7 +86,11 @@ export type Language = z.infer<typeof Language>;
 export const ToneRegister = z.enum(['formal', 'friendly', 'firm']);
 export type ToneRegister = z.infer<typeof ToneRegister>;
 
-export const Channel = z.enum(['email']);
+/**
+ * Three values, not two. Inbound text and outbound voice are different things
+ * and must be distinguishable in the case timeline.
+ */
+export const Channel = z.enum(['email', 'whatsapp_text', 'whatsapp_voice']);
 export type Channel = z.infer<typeof Channel>;
 
 export const UserRole = z.enum(['admin', 'operator', 'viewer']);
