@@ -44,11 +44,28 @@ await bootstrap(db);
 
 const events: ReplayEvent[] = [];
 let created = 0;
+/**
+ * Its own counter, not `created`: that one increments at the END of the loop
+ * body, so any `continue` in between would hand the next customer the same
+ * number — and phone is unique.
+ */
+let phoneSeq = 0;
 
 for (const p of population) {
   const [customer] = await db
     .insert(customers)
-    .values({ name: p.name, email: p.email, timezone: 'Asia/Kolkata', preferredLanguage: p.language })
+    .values({
+      name: p.name,
+      email: p.email,
+      timezone: 'Asia/Kolkata',
+      preferredLanguage: p.language,
+      // A voice note skips a customer with no number or no consent, so without
+      // these the demo shows an email path and nothing beside it. Sequential
+      // rather than random so `pnpm seed` stays reproducible and the numbers
+      // stay unique — phone is a unique column.
+      phone: `+9190${String(phoneSeq++).padStart(8, '0')}`,
+      whatsappConsent: true,
+    })
     .returning();
   if (!customer) continue;
   await db.insert(accounts).values({ customerId: customer.id, kind: p.kind, companyName: p.companyName ?? null });
