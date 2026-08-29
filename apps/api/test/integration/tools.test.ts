@@ -15,6 +15,8 @@ import {
 } from '../../src/db/schema.js';
 import { executeIntervention, executeScheduledMandateDebit, type ToolDeps } from '../../src/tools/execute.js';
 import { SandboxPaymentProvider } from '../../src/payments/sandboxAdapter.js';
+import { MockSynthesizer } from '../../src/voice/index.js';
+import { MockWhatsAppSender } from '../../src/whatsapp/index.js';
 import { seedCustomer, seedInvoice } from '../helpers/fixtures.js';
 
 afterAll(async () => {
@@ -37,6 +39,11 @@ function makeToolDeps() {
       scheduled.push({ job, delayMs });
     },
     enqueueAgent: async () => {},
+    voice: {
+      synthesizer: new MockSynthesizer(),
+      whatsapp: new MockWhatsAppSender(),
+      whatsappMode: 'mock',
+    },
   };
   return { deps, scheduled, sentEmails };
 }

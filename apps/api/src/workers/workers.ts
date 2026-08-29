@@ -23,7 +23,10 @@ import { evaluateAndPersistPolicy, getActivePolicy } from '../policy/service.js'
 import { abandonIntervention, executeIntervention, executeScheduledMandateDebit, type ToolDeps } from '../tools/execute.js';
 import { getLlmClient } from '../llm/index.js';
 import { getPaymentProvider } from '../payments/index.js';
+import { env } from '../config/env.js';
 import { getMailer } from '../mailer/index.js';
+import { getVoiceSynthesizer } from '../voice/index.js';
+import { getWhatsAppSender } from '../whatsapp/index.js';
 
 /**
  * BullMQ workers — production counterparts of the InProcessRuntime, sharing
@@ -53,6 +56,11 @@ export function buildLiveDeps(db: Db): { orchestrator: OrchestratorDeps; agents:
   const tools: ToolDeps = {
     provider: getPaymentProvider(),
     mailer: getMailer(),
+    voice: {
+      synthesizer: getVoiceSynthesizer(),
+      whatsapp: getWhatsAppSender(),
+      whatsappMode: env.WHATSAPP_MODE,
+    },
     enqueueScheduled: async (job, delayMs) => {
       await queues.scheduled.add(job.kind, job as ScheduledJob, { ...defaultJobOpts, delay: delayMs });
     },
