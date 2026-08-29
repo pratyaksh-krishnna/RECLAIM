@@ -83,10 +83,13 @@ describe('GET /recovery/cases/:caseId/communications/:id/audio', () => {
     expect(res.status).toBe(401);
   });
 
-  it('accepts the token as a query parameter, since <audio> cannot set a header', async () => {
+  it('does NOT accept a token in the query string', async () => {
+    // A credential in a URL is written to access logs, browser history and
+    // Referer headers. The browser fetches these bytes with the normal
+    // authenticated client and plays them from a blob URL instead.
     const { token, caseId, commId } = await fixture(true);
     const res = await fetch(audioUrl(caseId, commId, `?token=${encodeURIComponent(token)}`));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(401);
   });
 
   it('404s for a communication with no audio', async () => {

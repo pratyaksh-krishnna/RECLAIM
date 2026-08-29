@@ -4,6 +4,7 @@ import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, Lock, Scale } fr
 import { useState } from 'react';
 import { api, formatINRExact, getUser, timeAgo } from '../lib/api';
 import type { CaseDetail, RuleTraceEntry } from '../lib/types';
+import { ImmutableChip, VoiceNote, splitRuns } from '../components/VoiceNote';
 import {
   Badge,
   Button,
@@ -201,14 +202,32 @@ function CaseView() {
                 >
                   <div className="mb-2 flex flex-wrap items-center gap-2 text-2xs text-ash">
                     <Badge tone={m.direction === 'inbound' ? 'blue' : 'neutral'}>
-                      {m.direction === 'inbound' ? 'from the customer' : 'sent'}
+                      {m.direction === 'inbound'
+                        ? 'from the customer'
+                        : m.channel === 'whatsapp_voice' && m.consentSnapshot?.delivered === false
+                          ? /* the audio is real and the delivery never happened; the
+                               console must not imply a customer heard it */
+                            'not sent'
+                          : 'sent'}
                     </Badge>
+                    {m.channel !== 'email' && (
+                      <Chip>{m.channel === 'whatsapp_voice' ? 'whatsapp · voice' : 'whatsapp'}</Chip>
+                    )}
                     {m.templateId && <Chip>{m.templateId}</Chip>}
                     {m.language && <span className="uppercase">{m.language}</span>}
                     <span className="ml-auto">{timeAgo(m.sentAt)}</span>
                   </div>
                   {m.renderedSubject && <div className="mb-1 font-medium text-ink">{m.renderedSubject}</div>}
-                  <MessageBody body={m.renderedBody} outbound={m.direction === 'outbound'} />
+                  {m.channel === 'whatsapp_voice' ? (
+                    <VoiceNote
+                      caseId={caseId}
+                      communicationId={m.id}
+                      script={m.renderedBody}
+                      delivered={m.consentSnapshot?.delivered === true}
+                    />
+                  ) : (
+                    <MessageBody body={m.renderedBody} outbound={m.direction === 'outbound'} />
+                  )}
                 </div>
               ))}
             </CardContent>
@@ -446,22 +465,18 @@ function PolicyVerdict({ pd }: { pd: CaseDetail['policyDecisions'][number] }) {
 }
 
 /** Outbound message preview with immutable (server-injected) segments visually locked. */
+/**
+ * Written messages. Shares splitRuns with the voice transcript so there is ONE
+ * definition of what the server injected — the email and the voice note carry
+ * the same values in different registers, and a reader should see them marked
+ * the same way in both.
+ */
 function MessageBody({ body, outbound }: { body: string; outbound: boolean }) {
   if (!outbound) return <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-ink/90">{body}</pre>;
-  const parts = body.split(/(₹[\d,.]+|https?:\/\/\S+|INV-\S+|\d{1,2} [A-Z][a-z]+ \d{4})/g);
   return (
     <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-ink/90">
-      {parts.map((p, i) =>
-        /^(₹|https?:\/\/|INV-|\d{1,2} [A-Z])/.test(p) ? (
-          <Tooltip key={i} label="Immutable slot — injected by the server from database state. The AI cannot write or alter this value.">
-            <span className="cursor-help rounded border border-brass/30 bg-brass/10 px-1 font-medium text-brass">
-              <Lock size={9} className="mr-1 inline align-[-1px]" />
-              {p}
-            </span>
-          </Tooltip>
-        ) : (
-          <span key={i}>{p}</span>
-        ),
+      {splitRuns(body).map((r, i) =>
+        r.immutable ? <ImmutableChip key={i}>{r.text}</ImmutableChip> : <span key={i}>{r.text}</span>,
       )}
     </pre>
   );

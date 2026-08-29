@@ -90,7 +90,9 @@ describe('renderVoiceScript', () => {
   });
 
   it('throws when a referenced immutable value is missing', () => {
-    const { amount: _dropped, ...withoutAmount } = immutables;
+    const withoutAmount = Object.fromEntries(
+      Object.entries(immutables).filter(([k]) => k !== 'amount'),
+    );
     expect(() => renderVoiceScript(skeleton, script, withoutAmount, FILLS)).toThrow(
       /missing immutable slot value 'amount'/,
     );

@@ -44,6 +44,26 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
+/**
+ * Voice-note audio, as an object URL an <audio> element can play.
+ *
+ * Fetched rather than linked: an <audio src> cannot set an Authorization
+ * header, and putting the session token in the URL instead would write a
+ * credential into access logs, browser history and Referer headers. A note is
+ * 15-25KB, so loading it whole costs nothing and streaming buys nothing.
+ *
+ * The caller owns the returned URL and must revokeObjectURL it.
+ */
+export async function fetchAudioObjectUrl(caseId: string, communicationId: string): Promise<string> {
+  const token = getToken();
+  const res = await fetch(
+    `${API_URL}/recovery/cases/${caseId}/communications/${communicationId}/audio`,
+    { headers: token ? { authorization: `Bearer ${token}` } : {} },
+  );
+  if (!res.ok) throw new ApiError(res.status, await res.text());
+  return URL.createObjectURL(await res.blob());
+}
+
 export function formatINR(paise: number): string {
   return `₹${(paise / 100).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
 }

@@ -1,4 +1,4 @@
-import { Router, json, type NextFunction, type Request, type Response } from 'express';
+import { Router, json, type Request, type Response } from 'express';
 import { and, asc, desc, eq, inArray, notInArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { CaseState, InterveneActionParams, PolicyConfig, TERMINAL_STATES } from '@reclaim/shared';
@@ -157,22 +157,13 @@ export function makeApiRouter(deps: ApiDeps): Router {
   // Its own endpoint rather than a field on the case detail: audio is ~15-25KB
   // per note and the detail route selects every column of every communication.
 
-  /**
-   * An <audio src> cannot set an Authorization header, so this ONE route also
-   * accepts ?token=. Promoting the query token into the header keeps
-   * requireRole as the single place that validates a session.
-   */
-  const audioTokenFromQuery = (req: Request, _res: Response, next: NextFunction): void => {
-    const q = req.query['token'];
-    if (!req.header('authorization') && typeof q === 'string' && q) {
-      req.headers['authorization'] = `Bearer ${q}`;
-    }
-    next();
-  };
-
+  // The token stays in the Authorization header. An <audio src> cannot set one,
+  // so the browser fetches these bytes with the normal authenticated client and
+  // plays them from a blob URL — a credential in a query string would otherwise
+  // be written to access logs, browser history and Referer headers, and these
+  // notes are small enough that streaming buys nothing.
   router.get(
     '/recovery/cases/:caseId/communications/:id/audio',
-    audioTokenFromQuery,
     requireRole('viewer'),
     asyncRoute(async (req, res) => {
       const caseId = z.string().uuid().safeParse(req.params.caseId);

@@ -114,3 +114,14 @@ if (env.VOICE_MODE === 'sarvam' && !env.SARVAM_API_KEY) {
 if (env.WHATSAPP_MODE === 'live' && (!env.WHATSAPP_ACCESS_TOKEN || !env.WHATSAPP_PHONE_NUMBER_ID)) {
   throw new Error('WHATSAPP_MODE=live requires WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID');
 }
+
+// The inbound hook is reachable in every mode, so its secret is not gated on
+// WHATSAPP_MODE. An empty secret does not disable signature checking, it makes
+// signatures forgeable — and a forged inbound message opens the 24-hour window
+// that authorises outbound voice. verifyMetaSignature fails closed regardless;
+// this refuses to ship a production deploy that would 401 every real callback.
+if (isProd && (!env.WHATSAPP_VERIFY_TOKEN || !env.WHATSAPP_APP_SECRET)) {
+  throw new Error(
+    'production requires WHATSAPP_VERIFY_TOKEN and WHATSAPP_APP_SECRET; the inbound webhook rejects everything without them',
+  );
+}
