@@ -77,6 +77,12 @@ export class SarvamSynthesizer implements VoiceSynthesizer {
         // opus, not the wav default: WhatsApp renders audio/ogg;codecs=opus as a
         // real voice note with a waveform, and it is ~20x smaller than wav.
         output_audio_codec: 'opus',
+        // Explicit, and load-bearing. Opus accepts only 8000/12000/16000/24000/
+        // 48000 Hz, and the account default is 22050 — so leaving this unset
+        // fails the request outright with "OPUS codec requires one of these
+        // sample rates". 24000 is the highest opus takes that Sarvam documents
+        // as a v3 default, and speech needs no more.
+        speech_sample_rate: 24000,
         enable_preprocessing: true,
       }),
     });

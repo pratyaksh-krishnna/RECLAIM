@@ -48,6 +48,8 @@ describe('SarvamSynthesizer', () => {
       language_code: 'hi-IN',
       speaker: 'mani',
       output_audio_codec: 'opus',
+      // opus rejects the 22050 default outright; see the comment in voice.ts
+      speech_sample_rate: 24000,
     });
     expect(audio.bytes.toString()).toBe('AB');
     expect(audio.mimeType).toBe('audio/ogg');
