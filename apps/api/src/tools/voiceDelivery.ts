@@ -2,7 +2,12 @@ import type { Language, TemplateSkeleton } from '@reclaim/shared';
 import type { Db } from '../db/client.js';
 import { communications, customers, invoices, voiceMessages } from '../db/schema.js';
 import { writeAudit } from '../audit/audit.js';
-import { formatDateIST, formatINRForSpeech, renderVoiceScript } from '../templates/registry.js';
+import {
+  formatDateIST,
+  formatINRForSpeech,
+  formatInvoiceRefForSpeech,
+  renderVoiceScript,
+} from '../templates/registry.js';
 import type { VoiceSynthesizer } from '../voice/index.js';
 import { isWhatsAppWindowOpen, type WhatsAppSender } from '../whatsapp/index.js';
 
@@ -66,7 +71,7 @@ export function buildVoiceImmutableValues(
 ): Record<string, string> {
   const values: Record<string, string> = {
     amount: formatINRForSpeech(amountDuePaise),
-    invoice_number: invoice.providerInvoiceId ?? invoice.id.slice(0, 8),
+    invoice_number: formatInvoiceRefForSpeech(invoice.providerInvoiceId ?? invoice.id.slice(0, 8)),
   };
   if (templateId === 'payment_reminder') values['due_date'] = formatDateIST(invoice.dueDate);
   if (templateId === 'pre_debit_notice') {

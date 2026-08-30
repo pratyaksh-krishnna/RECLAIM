@@ -35,6 +35,23 @@ export function formatINRForSpeech(paise: number): string {
   return parts.length > 0 ? parts.join(' ') : '0 rupees';
 }
 
+/**
+ * An invoice reference, spoken.
+ *
+ * providerInvoiceId is a machine id — "inv_d4c775ba-254" — and read aloud that
+ * is "i n v underscore d four c seven seven five b a dash two five four",
+ * which no listener can hold or repeat back. Billers say "ending 254" on the
+ * phone for the same reason, and the customer has the invoice in hand, so the
+ * tail identifies it.
+ *
+ * Written messages keep the full id: you read those with your eyes.
+ */
+export function formatInvoiceRefForSpeech(reference: string): string {
+  const segments = reference.split(/[^0-9A-Za-z]+/).filter(Boolean);
+  const tail = segments[segments.length - 1] ?? reference;
+  return `ending ${tail.slice(-4)}`;
+}
+
 const commonFreeSlots = [
   { name: 'greeting', kind: 'free' as const, maxLength: 120, description: 'personal greeting, no numbers/links/amounts' },
   { name: 'context_sentence', kind: 'free' as const, maxLength: 300, description: 'one empathetic context sentence, no numbers/links/amounts' },

@@ -60,10 +60,18 @@ for (const p of population) {
       timezone: 'Asia/Kolkata',
       preferredLanguage: p.language,
       // A voice note skips a customer with no number or no consent, so without
-      // these the demo shows an email path and nothing beside it. Sequential
-      // rather than random so `pnpm seed` stays reproducible and the numbers
-      // stay unique — phone is a unique column.
-      phone: `+9190${String(phoneSeq++).padStart(8, '0')}`,
+      // these the demo shows an email path and nothing beside it.
+      //
+      // The number is deliberately UNROUTABLE. An Indian mobile is ten digits
+      // beginning 6-9, so "+9190…" would have been a dialable subscriber
+      // number — and a demo database plus WHATSAPP_MODE=live would then send
+      // voice notes to strangers. This is eight digits beginning 00: wrong
+      // length and wrong leading digit, so it cannot reach anyone. The seeded
+      // addresses use the reserved .test TLD for the same reason.
+      //
+      // Sequential rather than random so `pnpm seed` stays reproducible and
+      // the numbers stay unique — phone is a unique column.
+      phone: `+9100${String(phoneSeq++).padStart(6, '0')}`,
       whatsappConsent: true,
     })
     .returning();

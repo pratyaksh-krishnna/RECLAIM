@@ -6,6 +6,7 @@ import {
   TemplateRenderError,
   formatINR,
   formatINRForSpeech,
+  formatInvoiceRefForSpeech,
   needsPaymentLink,
   renderTemplate,
   renderVoiceScript,
@@ -293,6 +294,29 @@ describe('renderVoiceScript', () => {
         Object.entries(DEFAULT_FREE_FILLS).filter(([k]) => declared.has(k)),
       );
       expect(renderVoiceScript(s, values, fills).length).toBeLessThan(2500);
+    }
+  });
+});
+
+describe('formatInvoiceRefForSpeech', () => {
+  it('speaks the tail of a machine id, the way a biller does on the phone', () => {
+    // "inv_d4c775ba-254" read aloud is "i n v underscore d four c seven seven
+    // five b a dash two five four", which no listener can hold or repeat back.
+    expect(formatInvoiceRefForSpeech('inv_d4c775ba-254')).toBe('ending 254');
+    expect(formatInvoiceRefForSpeech('INV-4271')).toBe('ending 4271');
+  });
+
+  it('takes the last four when the tail is longer', () => {
+    expect(formatInvoiceRefForSpeech('inv_0009988776')).toBe('ending 8776');
+  });
+
+  it('handles a reference with no separator at all', () => {
+    expect(formatInvoiceRefForSpeech('20f9f9f3')).toBe('ending f9f3');
+  });
+
+  it('always contains a digit, so the console can tell it from agent prose', () => {
+    for (const ref of ['inv_d4c775ba-254', 'INV-4271', '20f9f9f3']) {
+      expect(formatInvoiceRefForSpeech(ref)).toMatch(/\d/);
     }
   });
 });

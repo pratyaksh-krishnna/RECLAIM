@@ -11,14 +11,19 @@ import { Eyebrow, Tooltip } from './ui/primitives';
 /**
  * The values the server injects, in both the written and the spoken register.
  *
- * The written half (₹2,499.00, a URL, INV-4271, a date) is what the email body
- * carries. The spoken half exists because a voice script says "2,499 rupees" —
- * formatINRForSpeech deliberately drops the glyph and the decimal, since a
- * synthesiser misreads both. Without the spoken patterns a transcript would
- * render with no provenance marking at all, in a console whose whole job is
- * saying who produced what.
+ * The written half (₹2,499.00, a URL, inv_d4c775ba-254, a date) is what the
+ * email body carries. The spoken half exists because the same values are said
+ * differently: formatINRForSpeech drops the glyph and the decimal, and
+ * formatInvoiceRefForSpeech says "ending 254", because a synthesiser misreads
+ * the first and no listener can hold the second. Without the spoken patterns a
+ * transcript would render with no provenance marking at all, in a console whose
+ * whole job is saying who produced what.
+ *
+ * The "ending …" pattern requires a digit, so an agent writing "ending soon" is
+ * not mistaken for a server value — and the free-slot lint bans digits in agent
+ * text outright, so anything numeric here came from the server.
  */
-const IMMUTABLE = String.raw`₹[\d,.]+|https?:\/\/\S+|INV-\S+|\d{1,2} [A-Z][a-z]+ \d{4}|\d[\d,]* rupees?(?: \d{1,2} paise?)?|\d{1,2} paise?`;
+const IMMUTABLE = String.raw`₹[\d,.]+|https?:\/\/\S+|(?:INV|inv)[-_]\S+|\d{1,2} [A-Z][a-z]+ \d{4}|\d[\d,]* rupees?(?: \d{1,2} paise?)?|\d{1,2} paise?|ending [0-9A-Za-z]*\d[0-9A-Za-z]*`;
 
 const SPLIT_IMMUTABLE = new RegExp(`(${IMMUTABLE})`, 'g');
 const IS_IMMUTABLE = new RegExp(`^(?:${IMMUTABLE})$`);
@@ -173,7 +178,13 @@ export function VoiceNote({
       setPlaying(false);
       setElapsed(0);
     };
-    const onError = () => setFailed(true);
+    // Only a real failure. The element renders with no src until first play,
+    // and a src-less <audio> fires `error` on its own — which would light the
+    // "could not be loaded" line and disable the play button before anyone had
+    // tried to load anything.
+    const onError = () => {
+      if (objectUrl.current) setFailed(true);
+    };
     el.addEventListener('timeupdate', onTime);
     el.addEventListener('loadedmetadata', onMeta);
     el.addEventListener('durationchange', onMeta);
