@@ -30,6 +30,7 @@ FLOW.md
 .agents/
 .claude/
 skills-lock.json
+docs/superpowers/
 
 # logs
 *.log
