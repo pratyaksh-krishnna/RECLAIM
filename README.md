@@ -120,6 +120,43 @@ all outreach, an opt-out suppressed globally, a prompt-injection reply flagged c
 the 10% holdout visibly untouched, and the Experiments screen concluding *gross recovered X,
 holdout says Y would have arrived anyway, incremental = X − Y* with a 95% CI.
 
+### Voice notes on WhatsApp
+
+Every email the system sends is accompanied by a spoken WhatsApp voice note,
+synthesised by [Sarvam](https://sarvam.ai) from the same agent output. The agent
+fills the same free slots for both; the amount is injected server-side into
+both, spoken as words rather than digits, because a synthesiser misreads a `₹`
+and turns `.00` into "point zero zero".
+
+Two independent switches:
+
+```ini
+VOICE_MODE=sarvam      # sarvam | mock — whether audio is generated
+WHATSAPP_MODE=mock     # mock | live   — whether it is delivered
+```
+
+**The defaults generate real audio and deliver it to nobody.** Voice notes
+appear on the case with a player and a transcript, badged *not sent*.
+`VOICE_MODE=sarvam` requires `SARVAM_API_KEY` and refuses to boot without it,
+the same way the LLM providers do; use `VOICE_MODE=mock` to run offline.
+
+To deliver for real, set `WHATSAPP_MODE=live` with `WHATSAPP_ACCESS_TOKEN` and
+`WHATSAPP_PHONE_NUMBER_ID` from a Meta WhatsApp Cloud API app, and point that
+app's webhook at `POST /webhooks/whatsapp` with `WHATSAPP_VERIFY_TOKEN` and
+`WHATSAPP_APP_SECRET` set. Production refuses to boot without the last two: an
+empty app secret does not disable signature checking, it makes signatures
+forgeable.
+
+One constraint worth knowing before turning it on: **WhatsApp permits a
+freeform message — which an audio message is — only inside a 24-hour window
+opened by the customer messaging you first.** Business-initiated contact must be
+a pre-approved template, and template headers support image, video and document
+but not audio. A case with no open window is skipped with a `voice.skipped` /
+`window_closed` audit event and still gets its email.
+
+A customer's WhatsApp reply is interpreted by the same agent that reads email
+replies, so `STOP` over WhatsApp opts them out of every channel.
+
 ### Where to look first
 
 | Screen | What it shows |

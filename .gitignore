@@ -45,3 +45,6 @@ logs/
 
 # infrastructure notes — local only
 infrastructure.md
+
+# generated voice audio — never source
+apps/api/out/

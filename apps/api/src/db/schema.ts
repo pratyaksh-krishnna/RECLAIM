@@ -1,6 +1,7 @@
 import {
   bigint,
   boolean,
+  customType,
   index,
   integer,
   jsonb,
@@ -20,6 +21,16 @@ import {
  */
 
 const ts = { withTimezone: true } as const;
+
+/**
+ * Postgres bytea. drizzle-orm/pg-core has no built-in for it, and audio is the
+ * only binary this schema holds.
+ */
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType() {
+    return 'bytea';
+  },
+});
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -47,6 +58,20 @@ export const customers = pgTable('customers', {
   optedOut: boolean('opted_out').notNull().default(false),
   optedOutAt: timestamp('opted_out_at', ts),
   emailConsent: boolean('email_consent').notNull().default(true),
+  /**
+   * Unique for the same reason `email` above is: the inbound WhatsApp hook
+   * resolves a customer BY PHONE. Without it, two rows could share a number and
+   * a reply would route to whichever Postgres returned first — the defect the
+   * comment over `email` describes, where an opt-out reached a stale closed
+   * case. Nullable, because most customers have no number on file, and NULLs
+   * do not collide under a unique index.
+   */
+  phone: text('phone').unique(),
+  /**
+   * Deliberately NOT derived from emailConsent. Reusing it would grant a
+   * channel the customer never agreed to.
+   */
+  whatsappConsent: boolean('whatsapp_consent').notNull().default(false),
   createdAt: timestamp('created_at', ts).notNull().defaultNow(),
 });
 
@@ -250,7 +275,9 @@ export const communications = pgTable(
     customerId: uuid('customer_id').notNull().references(() => customers.id),
     interventionId: uuid('intervention_id').references(() => interventions.id),
     direction: text('direction', { enum: ['outbound', 'inbound'] }).notNull(),
-    channel: text('channel', { enum: ['email'] }).notNull().default('email'),
+    channel: text('channel', { enum: ['email', 'whatsapp_text', 'whatsapp_voice'] })
+      .notNull()
+      .default('email'),
     templateId: text('template_id'),
     language: text('language', { enum: ['en', 'hi', 'hinglish'] }),
     renderedSubject: text('rendered_subject'),
@@ -263,6 +290,26 @@ export const communications = pgTable(
   },
   (t) => [index('comms_case_idx').on(t.caseId), index('comms_customer_sent_idx').on(t.customerId, t.sentAt)],
 );
+
+/**
+ * Audio lives here rather than on `communications` because `routes.ts` reads
+ * that table with `db.select().from(communications)` — every column. A bytea
+ * column there would ship the audio of every voice note into every case-detail
+ * response.
+ */
+export const voiceMessages = pgTable('voice_messages', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  communicationId: uuid('communication_id')
+    .notNull()
+    .unique()
+    .references(() => communications.id),
+  mimeType: text('mime_type').notNull(),
+  audio: bytea('audio').notNull(),
+  durationMs: integer('duration_ms'),
+  /** Sarvam's request_id, for support tickets */
+  sarvamRequestId: text('sarvam_request_id'),
+  createdAt: timestamp('created_at', ts).notNull().defaultNow(),
+});
 
 export const promisesToPay = pgTable('promises_to_pay', {
   id: uuid('id').primaryKey().defaultRandom(),

@@ -1,6 +1,6 @@
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import type { Db } from './db/client.js';
-import { makeInboundEmailRouter, makeWebhookRouter } from './ingest/webhookRouter.js';
+import { makeInboundEmailRouter, makeWebhookRouter, makeWhatsAppRouter } from './ingest/webhookRouter.js';
 import { makeApiRouter, type ApiDeps } from './api/routes.js';
 import { env } from './config/env.js';
 
@@ -21,6 +21,7 @@ export function buildApp(deps: AppDeps): Express {
   // NOTE: webhook router mounts BEFORE any json body parser — raw body required for HMAC
   app.use(makeWebhookRouter({ db: deps.db, webhookSecret: deps.webhookSecret, enqueueNormalize: deps.enqueueNormalize }));
   app.use(makeInboundEmailRouter({ db: deps.db }));
+  app.use(makeWhatsAppRouter({ db: deps.db }));
   // CORS: explicit allowlist only — never reflect arbitrary origins
   app.use((req: Request, res: Response, next: NextFunction) => {
     const origin = req.header('origin');

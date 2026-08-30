@@ -19,6 +19,17 @@ export const TemplateSkeleton = z.object({
   subject: z.string(),
   /** body with {{slotName}} placeholders */
   body: z.string(),
+  /**
+   * The spoken form of this template. Two rules, enforced by test: never
+   * {{payment_link}} (a URL read aloud is useless) and never {{legal_footer}}
+   * (the opt-out is spoken in plain language).
+   *
+   * The slot ORDER differs from the body on purpose. There, {{sign_off}} sits
+   * above {{legal_footer}}, which voice does not speak — so copying that order
+   * leaves the sign-off mid-message, dangling on its comma before the opt-out
+   * sentence. Spoken, a sign-off has to be last.
+   */
+  voiceScript: z.string(),
   slots: z.array(TemplateSlot),
   supportedLanguages: z.array(Language),
 });

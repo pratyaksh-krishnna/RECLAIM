@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../../src/db/client.js';
-import { customers, invoices, subscriptions } from '../../src/db/schema.js';
+import { customers, invoices, recoveryCases, subscriptions } from '../../src/db/schema.js';
 
 export async function seedCustomer(db: Db, overrides: Partial<typeof customers.$inferInsert> = {}) {
   const [row] = await db
@@ -53,5 +53,34 @@ export async function seedInvoice(
     })
     .returning();
   if (!row) throw new Error('seedInvoice failed');
+  return row;
+}
+
+/**
+ * An open case, with the columns recovery_cases marks NOT NULL already filled.
+ * Every test file was spelling `exposurePaise` and `attributionWindowEndsAt`
+ * out by hand, so a new one gets two confusing constraint violations before it
+ * gets to the thing it meant to test.
+ */
+export async function seedCase(
+  db: Db,
+  customerId: string,
+  invoiceId: string,
+  overrides: Partial<typeof recoveryCases.$inferInsert> = {},
+) {
+  const [row] = await db
+    .insert(recoveryCases)
+    .values({
+      customerId,
+      invoiceId,
+      state: 'executing',
+      leakType: 'subscription_payment_failure',
+      exposurePaise: 99_900,
+      holdoutArm: 'treatment',
+      attributionWindowEndsAt: new Date(Date.now() + 30 * 86_400_000),
+      ...overrides,
+    })
+    .returning();
+  if (!row) throw new Error('seedCase failed');
   return row;
 }

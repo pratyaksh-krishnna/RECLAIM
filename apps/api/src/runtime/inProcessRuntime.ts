@@ -4,6 +4,8 @@ import type { AgentDeps } from '../agents/runner.js';
 import { runAgentJob } from '../agents/runner.js';
 import type { LlmClient } from '../llm/index.js';
 import type { Mailer } from '../mailer/index.js';
+import { MockSynthesizer } from '../voice/index.js';
+import { MockWhatsAppSender } from '../whatsapp/index.js';
 import type { PaymentProvider } from '../payments/index.js';
 import { evaluateAndPersistPolicy, getActivePolicy } from '../policy/service.js';
 import { advanceCase, handleCanonicalEvent, type OrchestratorDeps } from '../orchestrator/orchestrator.js';
@@ -26,6 +28,8 @@ export interface RuntimeOptions {
   llm: LlmClient;
   provider: PaymentProvider;
   mailer: Mailer;
+  /** defaults to mocks: the in-process runtime must never reach a paid API */
+  voice?: ToolDeps['voice'];
   rng?: () => number;
   now?: () => Date;
   /** run delayed jobs immediately when draining (tests/demo time-compression) */
@@ -84,6 +88,11 @@ export class InProcessRuntime {
     this.toolDeps = {
       provider: this.opts.provider,
       mailer: this.opts.mailer,
+      voice: this.opts.voice ?? {
+        synthesizer: new MockSynthesizer(),
+        whatsapp: new MockWhatsAppSender(),
+        whatsappMode: 'mock',
+      },
       enqueueScheduled: async (job, delayMs) => {
         this.queue.push({ kind: 'scheduled', job, delayMs });
       },

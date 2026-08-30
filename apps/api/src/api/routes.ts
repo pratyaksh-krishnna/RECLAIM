@@ -16,6 +16,7 @@ import {
   recoveryCases,
   recoveryLedger,
   users,
+  voiceMessages,
 } from '../db/schema.js';
 import { writeAudit } from '../audit/audit.js';
 import { interventionStats, recoveryReport, revenueRiskSummary } from '../analytics/queries.js';
@@ -149,6 +150,43 @@ export function makeApiRouter(deps: ApiDeps): Router {
         ledger,
         audit,
       });
+    }),
+  );
+
+  // ---- voice audio ----
+  // Its own endpoint rather than a field on the case detail: audio is ~15-25KB
+  // per note and the detail route selects every column of every communication.
+
+  // The token stays in the Authorization header. An <audio src> cannot set one,
+  // so the browser fetches these bytes with the normal authenticated client and
+  // plays them from a blob URL — a credential in a query string would otherwise
+  // be written to access logs, browser history and Referer headers, and these
+  // notes are small enough that streaming buys nothing.
+  router.get(
+    '/recovery/cases/:caseId/communications/:id/audio',
+    requireRole('viewer'),
+    asyncRoute(async (req, res) => {
+      const caseId = z.string().uuid().safeParse(req.params.caseId);
+      const commId = z.string().uuid().safeParse(req.params.id);
+      if (!caseId.success || !commId.success) {
+        res.status(400).json({ error: 'invalid id' });
+        return;
+      }
+      const [row] = await db
+        .select({ audio: voiceMessages.audio, mimeType: voiceMessages.mimeType })
+        .from(voiceMessages)
+        .innerJoin(communications, eq(communications.id, voiceMessages.communicationId))
+        // the case_id join is what stops a communication id from another case
+        // being read through this URL
+        .where(and(eq(voiceMessages.communicationId, commId.data), eq(communications.caseId, caseId.data)))
+        .limit(1);
+      if (!row) {
+        res.status(404).json({ error: 'no audio for this communication' });
+        return;
+      }
+      res.setHeader('content-type', row.mimeType);
+      res.setHeader('cache-control', 'private, max-age=3600');
+      res.send(Buffer.from(row.audio));
     }),
   );
 

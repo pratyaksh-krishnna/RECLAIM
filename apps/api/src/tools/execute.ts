@@ -18,6 +18,7 @@ import { getActivePolicy } from '../policy/service.js';
 import type { Mailer } from '../mailer/index.js';
 import type { PaymentProvider } from '../payments/index.js';
 import { lockCase, transitionCase, type CaseRow } from '../orchestrator/caseService.js';
+import { deliverVoiceNote, type VoiceToolDeps } from './voiceDelivery.js';
 import { isTerminal } from '../orchestrator/fsm.js';
 import {
   DEFAULT_FREE_FILLS,
@@ -43,6 +44,8 @@ import {
 export interface ToolDeps {
   provider: PaymentProvider;
   mailer: Mailer;
+  /** voice note that accompanies each email; best-effort, never throws */
+  voice: VoiceToolDeps;
   enqueueScheduled(job: { kind: string; caseId: string; interventionId: string; attempt?: number }, delayMs: number): Promise<void>;
   enqueueAgent(job: { caseId: string; agent: 'summarizer' }): Promise<void>;
   now?: () => Date;
@@ -253,6 +256,17 @@ async function runTool(
         }
         await markExecuted(tx, ctx, now, { providerLinkId: link.providerLinkId, shortUrl: link.shortUrl });
       });
+      await deliverVoiceNote(db, deps.voice, {
+        caseId: caseRow.id,
+        customer,
+        invoice,
+        interventionId: ctx.intervention.id,
+        skeleton,
+        language: 'en',
+        freeFills: DEFAULT_FREE_FILLS,
+        amountDuePaise,
+        now,
+      });
       return { providerLinkId: link.providerLinkId, shortUrl: link.shortUrl };
     }
 
@@ -342,6 +356,18 @@ async function runTool(
           });
         }
         await markExecuted(tx, ctx, now, { scheduledAt: scheduleAt.toISOString(), noticeMessageId: sent.providerMessageId });
+      });
+      await deliverVoiceNote(db, deps.voice, {
+        caseId: caseRow.id,
+        customer,
+        invoice,
+        interventionId: ctx.intervention.id,
+        skeleton,
+        language: 'en',
+        freeFills: {},
+        amountDuePaise,
+        debitDate: scheduleAt,
+        now,
       });
       // 2) only AFTER the notice exists: schedule the execution job
       await deps.enqueueScheduled(
@@ -438,6 +464,17 @@ async function runTool(
           providerMessageId: sent.providerMessageId,
           ...(paymentLink ? { providerLinkId: paymentLink.providerLinkId, shortUrl: paymentLink.shortUrl } : {}),
         });
+      });
+      await deliverVoiceNote(db, deps.voice, {
+        caseId: caseRow.id,
+        customer,
+        invoice,
+        interventionId: ctx.intervention.id,
+        skeleton,
+        language: action.language,
+        freeFills,
+        amountDuePaise,
+        now,
       });
       return { providerMessageId: sent.providerMessageId, ...(paymentLink ? { paymentLink: paymentLink.shortUrl } : {}) };
     }

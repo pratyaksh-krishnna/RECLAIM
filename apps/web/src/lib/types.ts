@@ -47,7 +47,7 @@ export interface CaseDetail {
     schemaValid: boolean; confidence: string | null; latencyMs: number; createdAt: string;
   }>;
   policyDecisions: Array<{ id: string; verdict: string; reason: string | null; ruleTrace: RuleTraceEntry[]; policyVersion: number; createdAt: string; interventionId: string | null }>;
-  communications: Array<{ id: string; direction: string; templateId: string | null; renderedSubject: string | null; renderedBody: string; sentAt: string | null; language: string | null }>;
+  communications: Array<{ id: string; direction: string; channel: 'email' | 'whatsapp_text' | 'whatsapp_voice'; templateId: string | null; renderedSubject: string | null; renderedBody: string; sentAt: string | null; language: string | null; consentSnapshot: { delivered?: boolean } | null }>;
   interventions: Array<{ id: string; actionType: string; params: unknown; rationale: string | null; confidence: string | null; stopConditions: string[]; proposedBy: string; status: string; createdAt: string; executedAt: string | null }>;
   promises: Array<{ id: string; promisedDate: string; amountReference: string | null; status: string }>;
   ledger: Array<{ id: string; amountPaise: number; attributionClass: string; entryType: string; recordedAt: string }>;

@@ -16,6 +16,42 @@ export function formatDateIST(date: Date): string {
   return new Intl.DateTimeFormat('en-IN', { dateStyle: 'long', timeZone: 'Asia/Kolkata' }).format(date);
 }
 
+/**
+ * Money, spoken. formatINR above produces "₹2,499.00" — right in an email and
+ * a hazard in a synthesiser, where the ₹ glyph may be misread and ".00"
+ * becomes "point zero zero". The amount is the one thing a voice note must get
+ * exactly right, so it is deterministic here for the same reason the written
+ * form is. An agent still never touches a number.
+ */
+export function formatINRForSpeech(paise: number): string {
+  if (!Number.isInteger(paise) || paise < 0) {
+    throw new Error(`formatINRForSpeech expects non-negative integer paise, got ${paise}`);
+  }
+  const rupees = Math.floor(paise / 100);
+  const remainder = paise % 100;
+  const parts: string[] = [];
+  if (rupees > 0) parts.push(`${rupees.toLocaleString('en-IN')} ${rupees === 1 ? 'rupee' : 'rupees'}`);
+  if (remainder > 0) parts.push(`${remainder} ${remainder === 1 ? 'paisa' : 'paise'}`);
+  return parts.length > 0 ? parts.join(' ') : '0 rupees';
+}
+
+/**
+ * An invoice reference, spoken.
+ *
+ * providerInvoiceId is a machine id — "inv_d4c775ba-254" — and read aloud that
+ * is "i n v underscore d four c seven seven five b a dash two five four",
+ * which no listener can hold or repeat back. Billers say "ending 254" on the
+ * phone for the same reason, and the customer has the invoice in hand, so the
+ * tail identifies it.
+ *
+ * Written messages keep the full id: you read those with your eyes.
+ */
+export function formatInvoiceRefForSpeech(reference: string): string {
+  const segments = reference.split(/[^0-9A-Za-z]+/).filter(Boolean);
+  const tail = segments[segments.length - 1] ?? reference;
+  return `ending ${tail.slice(-4)}`;
+}
+
 const commonFreeSlots = [
   { name: 'greeting', kind: 'free' as const, maxLength: 120, description: 'personal greeting, no numbers/links/amounts' },
   { name: 'context_sentence', kind: 'free' as const, maxLength: 300, description: 'one empathetic context sentence, no numbers/links/amounts' },
@@ -37,6 +73,7 @@ Pay securely here (UPI, cards, netbanking): {{payment_link}}
 {{sign_off}}
 
 {{legal_footer}}`,
+    voiceScript: `{{greeting}} {{context_sentence}} Your payment of {{amount}} for invoice {{invoice_number}} could not be processed. We have emailed you a secure payment link — please check your inbox to complete it. If you would rather not receive these messages, just reply STOP. {{sign_off}}`,
     slots: [
       ...commonFreeSlots,
       { name: 'amount', kind: 'immutable', description: 'exact amount due, server-injected' },
@@ -59,6 +96,7 @@ Pay securely here (UPI, cards, netbanking): {{payment_link}}
 {{sign_off}}
 
 {{legal_footer}}`,
+    voiceScript: `{{greeting}} {{context_sentence}} The amount due on invoice {{invoice_number}} is {{amount}}. We have emailed you a secure payment link — please check your inbox to complete it. If you would rather not receive these messages, just reply STOP. {{sign_off}}`,
     slots: [
       ...commonFreeSlots,
       { name: 'amount', kind: 'immutable', description: 'exact amount due' },
@@ -78,6 +116,7 @@ As per your active mandate, {{amount}} for invoice {{invoice_number}} will be de
 No action is needed if you wish to proceed. To cancel this debit, use your UPI or bank app before the debit date.
 
 {{legal_footer}}`,
+    voiceScript: `Dear {{customer_name}}. As per your active mandate, {{amount}} for invoice {{invoice_number}} will be debited on {{debit_date}}. No action is needed if you wish to proceed. To cancel this debit, use your UPI or bank app before the debit date.`,
     // compliance notice: NO free slots — fully deterministic
     slots: [
       { name: 'customer_name', kind: 'immutable', description: 'customer name, server-injected' },
@@ -101,6 +140,7 @@ Pay securely here (UPI, cards, netbanking): {{payment_link}}
 {{sign_off}}
 
 {{legal_footer}}`,
+    voiceScript: `{{greeting}} {{context_sentence}} Invoice {{invoice_number}} for {{amount}} was due on {{due_date}} and is still open. We have emailed you a secure payment link — please check your inbox to complete it. If you would rather not receive these messages, just reply STOP. {{sign_off}}`,
     slots: [
       ...commonFreeSlots,
       { name: 'amount', kind: 'immutable', description: 'exact amount due' },
@@ -197,4 +237,38 @@ export function renderTemplate(
     });
 
   return { subject: fill(skeleton.subject), body: fill(skeleton.body) };
+}
+
+/**
+ * Render a skeleton's spoken form.
+ *
+ * Mirrors renderTemplate in every validation it performs, with ONE deliberate
+ * difference in the coverage rule. renderTemplate requires a value for every
+ * immutable slot the skeleton DECLARES; applied here that is wrong, because a
+ * voice script omits {{payment_link}} and {{legal_footer}} by design and would
+ * demand exactly the values it must not carry. So this requires a value only
+ * for the slots the SCRIPT references.
+ */
+export function renderVoiceScript(
+  skeleton: TemplateSkeleton,
+  immutableValues: Record<string, string>,
+  freeFills: Record<string, string>,
+): string {
+  const freeSlotNames = new Set(skeleton.slots.filter((s) => s.kind === 'free').map((s) => s.name));
+  const immutableSlotNames = new Set(
+    skeleton.slots.filter((s) => s.kind === 'immutable').map((s) => s.name),
+  );
+
+  const problems = validateFreeFills(skeleton, freeFills);
+  if (problems.length > 0) throw new TemplateRenderError(problems.join('; '));
+
+  return skeleton.voiceScript.replace(/\{\{(\w+)\}\}/g, (_m, name: string) => {
+    if (immutableSlotNames.has(name)) {
+      const value = immutableValues[name];
+      if (value === undefined) throw new TemplateRenderError(`missing immutable slot value '${name}'`);
+      return value;
+    }
+    if (freeSlotNames.has(name)) return freeFills[name] ?? DEFAULT_FREE_FILLS[name] ?? '';
+    throw new TemplateRenderError(`undeclared slot '{{${name}}}' in voice script ${skeleton.templateId}`);
+  });
 }

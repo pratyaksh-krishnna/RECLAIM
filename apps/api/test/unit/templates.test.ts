@@ -5,8 +5,11 @@ import {
   TEMPLATE_REGISTRY,
   TemplateRenderError,
   formatINR,
+  formatINRForSpeech,
+  formatInvoiceRefForSpeech,
   needsPaymentLink,
   renderTemplate,
+  renderVoiceScript,
   validateFreeFills,
 } from '../../src/templates/registry.js';
 import { buildImmutableValues } from '../../src/tools/execute.js';
@@ -195,5 +198,133 @@ describe('send_email can render every template it is allowed to name', () => {
     // both only exist once a mandate debit has actually been scheduled, which
     // is why schedule_mandate_reexecution owns this template
     expect(missing).toEqual(['customer_name', 'debit_date']);
+  });
+});
+
+describe('formatINRForSpeech', () => {
+  it('drops a zero paise component and never emits a glyph or a decimal point', () => {
+    expect(formatINRForSpeech(249_900)).toBe('2,499 rupees');
+    expect(formatINRForSpeech(249_900)).not.toMatch(/[₹.]/);
+  });
+  it('speaks a non-zero paise component and singularises at one', () => {
+    expect(formatINRForSpeech(249_950)).toBe('2,499 rupees 50 paise');
+    expect(formatINRForSpeech(100)).toBe('1 rupee');
+    expect(formatINRForSpeech(1)).toBe('1 paisa');
+  });
+  it('emits only paise when the rupee component is zero', () => {
+    expect(formatINRForSpeech(50)).toBe('50 paise');
+    expect(formatINRForSpeech(1)).toBe('1 paisa');
+  });
+  it('uses Indian digit grouping at lakh scale', () => {
+    expect(formatINRForSpeech(1_50_00_000)).toBe('1,50,000 rupees');
+  });
+  it('rejects a non-integer or negative amount', () => {
+    expect(() => formatINRForSpeech(-1)).toThrow(/non-negative integer paise/);
+    expect(() => formatINRForSpeech(1.5)).toThrow(/non-negative integer paise/);
+  });
+});
+
+describe('voice script coverage', () => {
+  it('every template has a voice script', () => {
+    for (const id of Object.keys(TEMPLATE_REGISTRY) as TemplateId[]) {
+      expect(TEMPLATE_REGISTRY[id].voiceScript, `${id} has no voiceScript`).toBeTruthy();
+    }
+  });
+  it('no voice script speaks a payment link or legal footer', () => {
+    for (const [id, s] of Object.entries(TEMPLATE_REGISTRY)) {
+      expect(s.voiceScript, `${id} speaks a URL`).not.toContain('{{payment_link}}');
+      expect(s.voiceScript, `${id} speaks legal boilerplate`).not.toContain('{{legal_footer}}');
+    }
+  });
+  it('no voice script references a slot its skeleton does not declare', () => {
+    for (const [id, s] of Object.entries(TEMPLATE_REGISTRY)) {
+      const declared = new Set(s.slots.map((slot) => slot.name));
+      for (const m of s.voiceScript.matchAll(/\{\{(\w+)\}\}/g)) {
+        expect(declared.has(m[1]!), `${id} references undeclared slot ${m[1]}`).toBe(true);
+      }
+    }
+  });
+  it('ends on the sign-off, not mid-message', () => {
+    // The email body puts {{sign_off}} above {{legal_footer}}; voice does not
+    // speak the footer, so copying that order left the sign-off dangling on
+    // its comma before the opt-out sentence.
+    for (const [id, s] of Object.entries(TEMPLATE_REGISTRY)) {
+      if (!s.voiceScript.includes('{{sign_off}}')) continue;
+      expect(s.voiceScript.trimEnd().endsWith('{{sign_off}}'), `${id} buries its sign-off`).toBe(true);
+    }
+  });
+});
+
+describe('renderVoiceScript', () => {
+  const skeleton = TEMPLATE_REGISTRY['payment_failed_notice'];
+  const immutables = { amount: formatINRForSpeech(99_900), invoice_number: 'INV-001' };
+
+  it('speaks the amount and never the link', () => {
+    const spoken = renderVoiceScript(skeleton, immutables, DEFAULT_FREE_FILLS);
+    expect(spoken).toContain('999 rupees');
+    expect(spoken).not.toContain('http');
+    expect(spoken).not.toContain('{{');
+  });
+
+  it('renders without a payment_link value, unlike renderTemplate', () => {
+    // renderTemplate demands a value for EVERY declared immutable slot, which
+    // here includes payment_link. A voice script omits it by design, so
+    // reusing that rule would fail every render.
+    expect(() => renderTemplate(skeleton, immutables, DEFAULT_FREE_FILLS)).toThrow(/missing immutable/);
+    expect(() => renderVoiceScript(skeleton, immutables, DEFAULT_FREE_FILLS)).not.toThrow();
+  });
+
+  it('applies the same free-slot lint as email', () => {
+    expect(() =>
+      renderVoiceScript(skeleton, immutables, { ...DEFAULT_FREE_FILLS, greeting: 'Pay ₹500 now' }),
+    ).toThrow(TemplateRenderError);
+  });
+
+  it('throws when a referenced immutable value is missing', () => {
+    expect(() => renderVoiceScript(skeleton, { invoice_number: 'INV-001' }, DEFAULT_FREE_FILLS)).toThrow(
+      /missing immutable slot value 'amount'/,
+    );
+  });
+
+  it('stays under Sarvam’s 2,500 character limit for every template', () => {
+    for (const id of Object.keys(TEMPLATE_REGISTRY) as TemplateId[]) {
+      const s = TEMPLATE_REGISTRY[id];
+      const values: Record<string, string> = {
+        amount: formatINRForSpeech(249_900),
+        invoice_number: 'INV-4271',
+        customer_name: 'Priya Sharma',
+        due_date: '1 August 2026',
+        debit_date: '1 September 2026',
+      };
+      // pre_debit_notice declares no free slots; handing it fills is an error
+      const declared = new Set(s.slots.filter((x) => x.kind === 'free').map((x) => x.name));
+      const fills = Object.fromEntries(
+        Object.entries(DEFAULT_FREE_FILLS).filter(([k]) => declared.has(k)),
+      );
+      expect(renderVoiceScript(s, values, fills).length).toBeLessThan(2500);
+    }
+  });
+});
+
+describe('formatInvoiceRefForSpeech', () => {
+  it('speaks the tail of a machine id, the way a biller does on the phone', () => {
+    // "inv_d4c775ba-254" read aloud is "i n v underscore d four c seven seven
+    // five b a dash two five four", which no listener can hold or repeat back.
+    expect(formatInvoiceRefForSpeech('inv_d4c775ba-254')).toBe('ending 254');
+    expect(formatInvoiceRefForSpeech('INV-4271')).toBe('ending 4271');
+  });
+
+  it('takes the last four when the tail is longer', () => {
+    expect(formatInvoiceRefForSpeech('inv_0009988776')).toBe('ending 8776');
+  });
+
+  it('handles a reference with no separator at all', () => {
+    expect(formatInvoiceRefForSpeech('20f9f9f3')).toBe('ending f9f3');
+  });
+
+  it('always contains a digit, so the console can tell it from agent prose', () => {
+    for (const ref of ['inv_d4c775ba-254', 'INV-4271', '20f9f9f3']) {
+      expect(formatInvoiceRefForSpeech(ref)).toMatch(/\d/);
+    }
   });
 });

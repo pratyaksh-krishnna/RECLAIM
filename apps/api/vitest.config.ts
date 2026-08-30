@@ -13,6 +13,11 @@ export default defineConfig({
       ANTHROPIC_API_KEY: 'test-key-not-used-fake-llm-injected',
       PAYMENTS_MODE: 'sandbox',
       RAZORPAY_WEBHOOK_SECRET: 'whsec_test_secret',
+      // never call Sarvam or Meta from a test run
+      VOICE_MODE: 'mock',
+      WHATSAPP_MODE: 'mock',
+      WHATSAPP_VERIFY_TOKEN: 'test-verify-token',
+      WHATSAPP_APP_SECRET: 'test-app-secret',
     },
   },
 });
