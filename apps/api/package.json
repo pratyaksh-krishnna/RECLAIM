@@ -3,9 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": {
-    "./templates/registry": "./src/templates/registry.ts"
-  },
   "scripts": {
     "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
     "start": "tsx --env-file-if-exists=../../.env src/main.ts",
@@ -14,7 +11,9 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file-if-exists=../../.env src/db/migrate.ts",
     "seed": "tsx --env-file-if-exists=../../.env src/seed/seed.ts",
-    "replay": "tsx --env-file-if-exists=../../.env src/seed/replay.ts"
+    "replay": "tsx --env-file-if-exists=../../.env src/seed/replay.ts",
+    "voice:try": "tsx --env-file-if-exists=../../.env src/seed/voiceTry.ts",
+    "voice:demo": "tsx --env-file-if-exists=../../.env src/seed/voiceDemo.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

@@ -211,8 +211,16 @@ describe('formatINRForSpeech', () => {
     expect(formatINRForSpeech(100)).toBe('1 rupee');
     expect(formatINRForSpeech(1)).toBe('1 paisa');
   });
+  it('emits only paise when the rupee component is zero', () => {
+    expect(formatINRForSpeech(50)).toBe('50 paise');
+    expect(formatINRForSpeech(1)).toBe('1 paisa');
+  });
+  it('uses Indian digit grouping at lakh scale', () => {
+    expect(formatINRForSpeech(1_50_00_000)).toBe('1,50,000 rupees');
+  });
   it('rejects a non-integer or negative amount', () => {
     expect(() => formatINRForSpeech(-1)).toThrow(/non-negative integer paise/);
+    expect(() => formatINRForSpeech(1.5)).toThrow(/non-negative integer paise/);
   });
 });
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MockSynthesizer, SarvamSynthesizer, sarvamLanguageCode } from '../src/voice.js';
+import { MockSynthesizer, SarvamSynthesizer, sarvamLanguageCode } from '../../src/voice/index.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();

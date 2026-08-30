@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MetaWhatsAppSender, MockWhatsAppSender } from '../src/whatsapp.js';
+import { MetaWhatsAppSender, MockWhatsAppSender } from '../../src/whatsapp/index.js';
 
 const AUDIO = { bytes: Buffer.from('OggS-fake'), mimeType: 'audio/ogg', requestId: 'req_1' };
 
