@@ -54,20 +54,20 @@ const skeleton = TEMPLATE_REGISTRY[templateId];
 // Stand-in figures. The real path resolves these from the invoice; here they
 // only need to be shaped like the values the server injects.
 const immutables: Record<string, string> = {
-  amount: formatINRForSpeech(249_900),
-  invoice_number: formatInvoiceRefForSpeech('inv_833010f3-4271'),
+  amount: formatINRForSpeech(249_900, language),
+  invoice_number: formatInvoiceRefForSpeech('inv_833010f3-4271', language),
   customer_name: 'Priya Sharma',
-  due_date: formatDateIST(new Date('2026-08-01T00:00:00Z')),
-  debit_date: formatDateIST(new Date('2026-09-01T00:00:00Z')),
+  due_date: formatDateIST(new Date('2026-08-01T00:00:00Z'), language),
+  debit_date: formatDateIST(new Date('2026-09-01T00:00:00Z'), language),
 };
 
 // pre_debit_notice declares no free slots; handing it fills is an error.
 const declared = new Set(skeleton.slots.filter((s) => s.kind === 'free').map((s) => s.name));
 const fills = Object.fromEntries(
-  Object.entries(DEFAULT_FREE_FILLS).filter(([k]) => declared.has(k)),
+  Object.entries(DEFAULT_FREE_FILLS[language]).filter(([k]) => declared.has(k)),
 );
 
-const script = renderVoiceScript(skeleton, immutables, fills);
+const script = renderVoiceScript(skeleton, language, immutables, fills);
 console.log(`\nscript (${script.length} chars):\n${script}\n`);
 
 const synth = getVoiceSynthesizer();

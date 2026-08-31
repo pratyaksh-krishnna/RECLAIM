@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, isNotNull } from 'drizzle-orm';
 import { ActionParams, CanonicalEvent } from '@reclaim/shared';
+import type { Language } from '@reclaim/shared';
 import type { Db, Tx } from '../db/client.js';
 import {
   communications,
@@ -22,6 +23,7 @@ import { deliverVoiceNote, type VoiceToolDeps } from './voiceDelivery.js';
 import { isTerminal } from '../orchestrator/fsm.js';
 import {
   DEFAULT_FREE_FILLS,
+  LEGAL_FOOTERS,
   TEMPLATE_REGISTRY,
   TemplateRenderError,
   formatDateIST,
@@ -211,17 +213,22 @@ async function runTool(
         idempotencyKey,
         expireByUnix: Math.floor((now().getTime() + 7 * 86_400_000) / 1000),
       });
-      // deliver via deterministic template — NO agent output in the money path
+      // deliver via deterministic template — NO agent output in the money path.
+      // Deterministic is not the same as English: skeleton, default fills and
+      // footer all exist in the customer's language, so this path stays free of
+      // agent text without switching languages on the customer mid-conversation.
       const skeleton = TEMPLATE_REGISTRY['payment_link_delivery']!;
+      const language = customer.preferredLanguage;
       const rendered = renderTemplate(
         skeleton,
+        language,
         {
           amount: formatINR(amountDuePaise),
           invoice_number: invoice.providerInvoiceId ?? invoice.id.slice(0, 8),
           payment_link: link.shortUrl,
-          legal_footer: 'This is a payment notice regarding your account. Reply STOP to opt out.',
+          legal_footer: LEGAL_FOOTERS.payment_notice[language],
         },
-        DEFAULT_FREE_FILLS,
+        DEFAULT_FREE_FILLS[language],
       );
       const sent = await deps.mailer.send({
         to: { name: customer.name, email: customer.email },
@@ -240,7 +247,7 @@ async function runTool(
           direction: 'outbound',
           channel: 'email',
           templateId: skeleton.templateId,
-          language: 'en',
+          language,
           renderedSubject: rendered.subject,
           renderedBody: rendered.body,
           consentSnapshot: { email: customer.emailConsent, optedOut: customer.optedOut },
@@ -262,8 +269,8 @@ async function runTool(
         invoice,
         interventionId: ctx.intervention.id,
         skeleton,
-        language: 'en',
-        freeFills: DEFAULT_FREE_FILLS,
+        language,
+        freeFills: DEFAULT_FREE_FILLS[language],
         amountDuePaise,
         now,
       });
@@ -300,14 +307,16 @@ async function runTool(
       const scheduleAt = requested < earliestLegalDebit ? earliestLegalDebit : requested;
       // 1) mandatory pre-debit notice FIRST — deterministic template, no free slots
       const skeleton = TEMPLATE_REGISTRY['pre_debit_notice']!;
+      const language = customer.preferredLanguage;
       const rendered = renderTemplate(
         skeleton,
+        language,
         {
           customer_name: customer.name,
           amount: formatINR(amountDuePaise),
           invoice_number: invoice.providerInvoiceId ?? invoice.id.slice(0, 8),
-          debit_date: formatDateIST(scheduleAt),
-          legal_footer: 'As per RBI e-mandate guidelines, you may cancel before the debit date.',
+          debit_date: formatDateIST(scheduleAt, language),
+          legal_footer: LEGAL_FOOTERS.emandate[language],
         },
         {},
       );
@@ -328,7 +337,7 @@ async function runTool(
           direction: 'outbound',
           channel: 'email',
           templateId: skeleton.templateId,
-          language: 'en',
+          language,
           renderedSubject: rendered.subject,
           renderedBody: rendered.body,
           consentSnapshot: { email: customer.emailConsent, optedOut: customer.optedOut },
@@ -363,7 +372,7 @@ async function runTool(
         invoice,
         interventionId: ctx.intervention.id,
         skeleton,
-        language: 'en',
+        language,
         freeFills: {},
         amountDuePaise,
         debitDate: scheduleAt,
@@ -390,7 +399,7 @@ async function runTool(
           "template 'pre_debit_notice' is sent only by schedule_mandate_reexecution, never by send_email",
         );
       }
-      const immutableValues = buildImmutableValues(skeleton.templateId, invoice, amountDuePaise);
+      const immutableValues = buildImmutableValues(skeleton.templateId, invoice, amountDuePaise, action.language);
       // a notice is only actionable if it carries a live link to pay from —
       // generate one (right amount, resolved server-side) for the same reason
       // create_payment_link does; reused on retry via the same idempotency key.
@@ -401,7 +410,7 @@ async function runTool(
       // ever supplied it — so an agent naming it here stranded the case with
       // "missing immutable slot value 'payment_link'". A hand-maintained list
       // is what allowed that; asking the template cannot go out of date.
-      const freeFills = { ...DEFAULT_FREE_FILLS, ...action.slotFills };
+      const freeFills = { ...DEFAULT_FREE_FILLS[action.language], ...action.slotFills };
       // Lint BEFORE calling the provider. This used to run only inside
       // renderTemplate, below the link creation — so an email rejected for a
       // bad fill had already minted a live, payable link, and the retry minted
@@ -425,7 +434,7 @@ async function runTool(
       }
       // defense in depth: linted at agent time and again above; renderTemplate
       // re-runs the same check plus the immutable-slot coverage check
-      const rendered = renderTemplate(skeleton, immutableValues, freeFills);
+      const rendered = renderTemplate(skeleton, action.language, immutableValues, freeFills);
       const sent = await deps.mailer.send({
         to: { name: customer.name, email: customer.email },
         subject: rendered.subject,
@@ -584,13 +593,14 @@ export function buildImmutableValues(
   templateId: string,
   invoice: typeof invoices.$inferSelect,
   amountDuePaise: number,
+  language: Language,
 ): Record<string, string> {
   const base: Record<string, string> = {
     amount: formatINR(amountDuePaise),
     invoice_number: invoice.providerInvoiceId ?? invoice.id.slice(0, 8),
-    legal_footer: 'This is a payment notice regarding your account. Reply STOP to opt out.',
+    legal_footer: LEGAL_FOOTERS.payment_notice[language],
   };
-  if (templateId === 'payment_reminder') base['due_date'] = formatDateIST(invoice.dueDate);
+  if (templateId === 'payment_reminder') base['due_date'] = formatDateIST(invoice.dueDate, language);
   return base;
 }
 

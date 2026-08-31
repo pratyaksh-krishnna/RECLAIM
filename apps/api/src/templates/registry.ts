@@ -1,4 +1,21 @@
-import { lintFreeSlotFills, type TemplateId, type TemplateSkeleton } from '@reclaim/shared';
+import {
+  lintFreeSlotFills,
+  type Language,
+  type LocalizedText,
+  type TemplateId,
+  type TemplateSkeleton,
+} from '@reclaim/shared';
+
+/**
+ * Pick one language out of a LocalizedText.
+ *
+ * Every field carries every language, so this cannot miss — which is the
+ * point. The alternative, an English string plus optional overrides, silently
+ * falls back to English for the customer who least wants it.
+ */
+export function localize(text: LocalizedText, language: Language): string {
+  return text[language];
+}
 
 /**
  * Approved template skeletons. Immutable slots ({{amount}}, {{payment_link}},
@@ -12,8 +29,15 @@ export function formatINR(paise: number): string {
   return `₹${rupees.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export function formatDateIST(date: Date): string {
-  return new Intl.DateTimeFormat('en-IN', { dateStyle: 'long', timeZone: 'Asia/Kolkata' }).format(date);
+/**
+ * A date, written or spoken, in the customer's language.
+ *
+ * Hinglish takes the English form on purpose: it is Latin-script by
+ * definition, and "1 September 2026" is what a Hinglish speaker writes.
+ */
+export function formatDateIST(date: Date, language: Language): string {
+  const locale = language === 'hi' ? 'hi-IN' : 'en-IN';
+  return new Intl.DateTimeFormat(locale, { dateStyle: 'long', timeZone: 'Asia/Kolkata' }).format(date);
 }
 
 /**
@@ -23,16 +47,29 @@ export function formatDateIST(date: Date): string {
  * exactly right, so it is deterministic here for the same reason the written
  * form is. An agent still never touches a number.
  */
-export function formatINRForSpeech(paise: number): string {
+const CURRENCY_WORDS: Record<Language, { rupee: string; rupees: string; paisa: string; paise: string }> = {
+  en: { rupee: 'rupee', rupees: 'rupees', paisa: 'paisa', paise: 'paise' },
+  hi: { rupee: 'रुपया', rupees: 'रुपये', paisa: 'पैसा', paise: 'पैसे' },
+  hinglish: { rupee: 'rupee', rupees: 'rupees', paisa: 'paisa', paise: 'paise' },
+};
+
+export function formatINRForSpeech(paise: number, language: Language): string {
   if (!Number.isInteger(paise) || paise < 0) {
     throw new Error(`formatINRForSpeech expects non-negative integer paise, got ${paise}`);
   }
+  const w = CURRENCY_WORDS[language];
   const rupees = Math.floor(paise / 100);
   const remainder = paise % 100;
   const parts: string[] = [];
-  if (rupees > 0) parts.push(`${rupees.toLocaleString('en-IN')} ${rupees === 1 ? 'rupee' : 'rupees'}`);
-  if (remainder > 0) parts.push(`${remainder} ${remainder === 1 ? 'paisa' : 'paise'}`);
-  return parts.length > 0 ? parts.join(' ') : '0 rupees';
+  // The DIGITS stay Latin digits in every language, exactly as the English
+  // form always kept them ("499 rupees", never "four hundred ninety nine").
+  // Sarvam's preprocessing reads a numeral in the voice's own language, so
+  // hi-IN says "चार सौ निन्यानवे" unaided; only the currency word has to
+  // change, and spelling numbers out by hand would add a converter whose edge
+  // cases nothing else in this file has.
+  if (rupees > 0) parts.push(`${rupees.toLocaleString('en-IN')} ${rupees === 1 ? w.rupee : w.rupees}`);
+  if (remainder > 0) parts.push(`${remainder} ${remainder === 1 ? w.paisa : w.paise}`);
+  return parts.length > 0 ? parts.join(' ') : `0 ${w.rupees}`;
 }
 
 /**
@@ -44,12 +81,26 @@ export function formatINRForSpeech(paise: number): string {
  * phone for the same reason, and the customer has the invoice in hand, so the
  * tail identifies it.
  *
+ * The tail is spoken CHARACTER BY CHARACTER, spaced. Handed "8776" the
+ * synthesiser says "eight thousand seven hundred seventy six", and handed
+ * "f9f3" it attempts a word — neither of which a listener can match against
+ * the id printed on their invoice. Spacing forces "eight seven seven six",
+ * which is what someone writing it down needs to hear.
+ *
  * Written messages keep the full id: you read those with your eyes.
  */
-export function formatInvoiceRefForSpeech(reference: string): string {
+const ENDING_WORD: Record<Language, string> = {
+  en: 'ending',
+  hi: 'अंतिम अंक',
+  hinglish: 'ending',
+};
+
+export function formatInvoiceRefForSpeech(reference: string, language: Language): string {
   const segments = reference.split(/[^0-9A-Za-z]+/).filter(Boolean);
   const tail = segments[segments.length - 1] ?? reference;
-  return `ending ${tail.slice(-4)}`;
+  // The tail itself stays as printed on the invoice — it is an identifier the
+  // customer matches character for character, not a word to translate.
+  return `${ENDING_WORD[language]} ${tail.slice(-4).split('').join(' ')}`;
 }
 
 const commonFreeSlots = [
@@ -58,12 +109,35 @@ const commonFreeSlots = [
   { name: 'sign_off', kind: 'free' as const, maxLength: 120, description: 'sign-off line, no numbers/links/amounts' },
 ];
 
-/** Typed by TemplateId: a missing or extra template is a compile error. */
+/**
+ * Typed by TemplateId: a missing or extra template is a compile error, and
+ * every text field is a LocalizedText, so is a missing translation.
+ *
+ * The opt-out keyword stays the literal "STOP" in all three languages. It is a
+ * command the customer types back, not prose — translating it would leave a
+ * Hindi customer told to reply with a word our own reply interpreter was never
+ * shown.
+ *
+ * The Hindi is EVERYDAY Hindi, not शुद्ध हिंदी. Billing vocabulary in India is
+ * English: people say पेमेंट, इनवॉइस, लिंक, ड्यू — not भुगतान, चालान, देय.
+ * Sanskritised Hindi reads as a government form, which is the opposite of what
+ * a payment reminder wants to sound like.
+ *
+ * Those loanwords are written in DEVANAGARI, never Latin script. hi-IN
+ * mispronounces Latin text — the same fact that sends Hinglish to en-IN in
+ * sarvamLanguageCode — so "पेमेंट लिंक" is heard correctly where "payment
+ * link" would not be.
+ */
 export const TEMPLATE_REGISTRY: Record<TemplateId, TemplateSkeleton> = {
   payment_failed_notice: {
     templateId: 'payment_failed_notice',
-    subject: 'Payment issue on invoice {{invoice_number}}',
-    body: `{{greeting}}
+    subject: {
+      en: 'Payment issue on invoice {{invoice_number}}',
+      hi: 'इनवॉइस {{invoice_number}} पर पेमेंट की दिक्कत',
+      hinglish: 'Invoice {{invoice_number}} par payment ki dikkat',
+    },
+    body: {
+      en: `{{greeting}}
 
 {{context_sentence}}
 
@@ -73,7 +147,32 @@ Pay securely here (UPI, cards, netbanking): {{payment_link}}
 {{sign_off}}
 
 {{legal_footer}}`,
-    voiceScript: `{{greeting}} {{context_sentence}} Your payment of {{amount}} for invoice {{invoice_number}} could not be processed. We have emailed you a secure payment link — please check your inbox to complete it. If you would rather not receive these messages, just reply STOP. {{sign_off}}`,
+      hi: `{{greeting}}
+
+{{context_sentence}}
+
+इनवॉइस {{invoice_number}} के लिए आपका {{amount}} का पेमेंट प्रोसेस नहीं हो पाया।
+यहाँ सुरक्षित तरीके से पेमेंट करें (यूपीआई, कार्ड, नेटबैंकिंग): {{payment_link}}
+
+{{sign_off}}
+
+{{legal_footer}}`,
+      hinglish: `{{greeting}}
+
+{{context_sentence}}
+
+Invoice {{invoice_number}} ke liye aapka {{amount}} ka payment process nahi ho paya.
+Yahan surakshit tareeke se payment karein (UPI, cards, netbanking): {{payment_link}}
+
+{{sign_off}}
+
+{{legal_footer}}`,
+    },
+    voiceScript: {
+      en: `{{greeting}} {{context_sentence}} Your payment of {{amount}} for invoice {{invoice_number}} could not be processed. We have emailed you a secure payment link — please check your inbox to complete it. If you would rather not receive these messages, just reply STOP. {{sign_off}}`,
+      hi: `{{greeting}} {{context_sentence}} इनवॉइस {{invoice_number}} के लिए आपका {{amount}} का पेमेंट प्रोसेस नहीं हो पाया। हमने आपको ईमेल पर एक सुरक्षित पेमेंट लिंक भेजा है — उसे पूरा करने के लिए अपना इनबॉक्स देखें। अगर आप ये मैसेज नहीं चाहते, तो जवाब में STOP लिख दें। {{sign_off}}`,
+      hinglish: `{{greeting}} {{context_sentence}} Invoice {{invoice_number}} ke liye aapka {{amount}} ka payment process nahi ho paya. Humne aapko email par ek surakshit payment link bheja hai — use poora karne ke liye apna inbox dekhein. Agar aap ye messages nahi chahte, to jawab mein STOP likh dein. {{sign_off}}`,
+    },
     slots: [
       ...commonFreeSlots,
       { name: 'amount', kind: 'immutable', description: 'exact amount due, server-injected' },
@@ -81,12 +180,16 @@ Pay securely here (UPI, cards, netbanking): {{payment_link}}
       { name: 'payment_link', kind: 'immutable', description: 'provider short URL, server-injected' },
       { name: 'legal_footer', kind: 'immutable', description: 'legal/opt-out text, server-injected' },
     ],
-    supportedLanguages: ['en', 'hi', 'hinglish'],
   },
   payment_link_delivery: {
     templateId: 'payment_link_delivery',
-    subject: 'Payment link for invoice {{invoice_number}} — {{amount}}',
-    body: `{{greeting}}
+    subject: {
+      en: 'Payment link for invoice {{invoice_number}} — {{amount}}',
+      hi: 'इनवॉइस {{invoice_number}} के लिए पेमेंट लिंक — {{amount}}',
+      hinglish: 'Invoice {{invoice_number}} ke liye payment link — {{amount}}',
+    },
+    body: {
+      en: `{{greeting}}
 
 {{context_sentence}}
 
@@ -96,7 +199,32 @@ Pay securely here (UPI, cards, netbanking): {{payment_link}}
 {{sign_off}}
 
 {{legal_footer}}`,
-    voiceScript: `{{greeting}} {{context_sentence}} The amount due on invoice {{invoice_number}} is {{amount}}. We have emailed you a secure payment link — please check your inbox to complete it. If you would rather not receive these messages, just reply STOP. {{sign_off}}`,
+      hi: `{{greeting}}
+
+{{context_sentence}}
+
+बाकी अमाउंट: इनवॉइस {{invoice_number}} के लिए {{amount}}।
+यहाँ सुरक्षित तरीके से पेमेंट करें (यूपीआई, कार्ड, नेटबैंकिंग): {{payment_link}}
+
+{{sign_off}}
+
+{{legal_footer}}`,
+      hinglish: `{{greeting}}
+
+{{context_sentence}}
+
+Baaki rashi: invoice {{invoice_number}} ke liye {{amount}}.
+Yahan surakshit tareeke se payment karein (UPI, cards, netbanking): {{payment_link}}
+
+{{sign_off}}
+
+{{legal_footer}}`,
+    },
+    voiceScript: {
+      en: `{{greeting}} {{context_sentence}} The amount due on invoice {{invoice_number}} is {{amount}}. We have emailed you a secure payment link — please check your inbox to complete it. If you would rather not receive these messages, just reply STOP. {{sign_off}}`,
+      hi: `{{greeting}} {{context_sentence}} इनवॉइस {{invoice_number}} पर बाकी अमाउंट {{amount}} है। हमने आपको ईमेल पर एक सुरक्षित पेमेंट लिंक भेजा है — उसे पूरा करने के लिए अपना इनबॉक्स देखें। अगर आप ये मैसेज नहीं चाहते, तो जवाब में STOP लिख दें। {{sign_off}}`,
+      hinglish: `{{greeting}} {{context_sentence}} Invoice {{invoice_number}} par baaki rashi {{amount}} hai. Humne aapko email par ek surakshit payment link bheja hai — use poora karne ke liye apna inbox dekhein. Agar aap ye messages nahi chahte, to jawab mein STOP likh dein. {{sign_off}}`,
+    },
     slots: [
       ...commonFreeSlots,
       { name: 'amount', kind: 'immutable', description: 'exact amount due' },
@@ -104,19 +232,42 @@ Pay securely here (UPI, cards, netbanking): {{payment_link}}
       { name: 'payment_link', kind: 'immutable', description: 'provider short URL, server-injected' },
       { name: 'legal_footer', kind: 'immutable', description: 'legal/opt-out text' },
     ],
-    supportedLanguages: ['en', 'hi', 'hinglish'],
   },
   pre_debit_notice: {
     templateId: 'pre_debit_notice',
-    subject: 'Upcoming auto-debit of {{amount}} on {{debit_date}}',
-    body: `Dear {{customer_name}},
+    subject: {
+      en: 'Upcoming auto-debit of {{amount}} on {{debit_date}}',
+      hi: '{{debit_date}} को {{amount}} का आने वाला ऑटो-डेबिट',
+      hinglish: '{{debit_date}} ko {{amount}} ka aane wala auto-debit',
+    },
+    body: {
+      en: `Dear {{customer_name}},
 
 As per your active mandate, {{amount}} for invoice {{invoice_number}} will be debited on {{debit_date}}.
 
 No action is needed if you wish to proceed. To cancel this debit, use your UPI or bank app before the debit date.
 
 {{legal_footer}}`,
-    voiceScript: `Dear {{customer_name}}. As per your active mandate, {{amount}} for invoice {{invoice_number}} will be debited on {{debit_date}}. No action is needed if you wish to proceed. To cancel this debit, use your UPI or bank app before the debit date.`,
+      hi: `नमस्ते {{customer_name}},
+
+आपके एक्टिव मैंडेट के अनुसार, इनवॉइस {{invoice_number}} के लिए {{amount}} {{debit_date}} को डेबिट किया जाएगा।
+
+अगर आप आगे बढ़ना चाहते हैं तो कुछ करने की ज़रूरत नहीं है। इस डेबिट को कैंसिल करने के लिए, डेबिट डेट से पहले अपना यूपीआई या बैंक ऐप इस्तेमाल करें।
+
+{{legal_footer}}`,
+      hinglish: `Namaste {{customer_name}},
+
+Aapke active mandate ke anusaar, invoice {{invoice_number}} ke liye {{amount}} {{debit_date}} ko debit kiya jayega.
+
+Agar aap aage badhna chahte hain to kuch karne ki zaroorat nahi hai. Is debit ko cancel karne ke liye, debit date se pehle apne UPI ya bank app ka upyog karein.
+
+{{legal_footer}}`,
+    },
+    voiceScript: {
+      en: `Dear {{customer_name}}. As per your active mandate, {{amount}} for invoice {{invoice_number}} will be debited on {{debit_date}}. No action is needed if you wish to proceed. To cancel this debit, use your UPI or bank app before the debit date.`,
+      hi: `नमस्ते {{customer_name}}। आपके एक्टिव मैंडेट के अनुसार, इनवॉइस {{invoice_number}} के लिए {{amount}} {{debit_date}} को डेबिट किया जाएगा। अगर आप आगे बढ़ना चाहते हैं तो कुछ करने की ज़रूरत नहीं है। इस डेबिट को कैंसिल करने के लिए, डेबिट डेट से पहले अपना यूपीआई या बैंक ऐप इस्तेमाल करें।`,
+      hinglish: `Namaste {{customer_name}}. Aapke active mandate ke anusaar, invoice {{invoice_number}} ke liye {{amount}} {{debit_date}} ko debit kiya jayega. Agar aap aage badhna chahte hain to kuch karne ki zaroorat nahi hai. Is debit ko cancel karne ke liye, debit date se pehle apne UPI ya bank app ka upyog karein.`,
+    },
     // compliance notice: NO free slots — fully deterministic
     slots: [
       { name: 'customer_name', kind: 'immutable', description: 'customer name, server-injected' },
@@ -125,12 +276,16 @@ No action is needed if you wish to proceed. To cancel this debit, use your UPI o
       { name: 'debit_date', kind: 'immutable', description: 'scheduled debit date' },
       { name: 'legal_footer', kind: 'immutable', description: 'legal text' },
     ],
-    supportedLanguages: ['en', 'hi', 'hinglish'],
   },
   payment_reminder: {
     templateId: 'payment_reminder',
-    subject: 'Reminder: invoice {{invoice_number}} ({{amount}}) is due',
-    body: `{{greeting}}
+    subject: {
+      en: 'Reminder: invoice {{invoice_number}} ({{amount}}) is due',
+      hi: 'रिमाइंडर: इनवॉइस {{invoice_number}} ({{amount}}) ड्यू है',
+      hinglish: 'Reminder: invoice {{invoice_number}} ({{amount}}) due hai',
+    },
+    body: {
+      en: `{{greeting}}
 
 {{context_sentence}}
 
@@ -140,7 +295,32 @@ Pay securely here (UPI, cards, netbanking): {{payment_link}}
 {{sign_off}}
 
 {{legal_footer}}`,
-    voiceScript: `{{greeting}} {{context_sentence}} Invoice {{invoice_number}} for {{amount}} was due on {{due_date}} and is still open. We have emailed you a secure payment link — please check your inbox to complete it. If you would rather not receive these messages, just reply STOP. {{sign_off}}`,
+      hi: `{{greeting}}
+
+{{context_sentence}}
+
+{{amount}} का इनवॉइस {{invoice_number}} {{due_date}} को ड्यू था और अभी तक पेंडिंग है।
+यहाँ सुरक्षित तरीके से पेमेंट करें (यूपीआई, कार्ड, नेटबैंकिंग): {{payment_link}}
+
+{{sign_off}}
+
+{{legal_footer}}`,
+      hinglish: `{{greeting}}
+
+{{context_sentence}}
+
+{{amount}} ka invoice {{invoice_number}} {{due_date}} ko due tha aur abhi tak unpaid hai.
+Yahan surakshit tareeke se payment karein (UPI, cards, netbanking): {{payment_link}}
+
+{{sign_off}}
+
+{{legal_footer}}`,
+    },
+    voiceScript: {
+      en: `{{greeting}} {{context_sentence}} Invoice {{invoice_number}} for {{amount}} was due on {{due_date}} and is still open. We have emailed you a secure payment link — please check your inbox to complete it. If you would rather not receive these messages, just reply STOP. {{sign_off}}`,
+      hi: `{{greeting}} {{context_sentence}} {{amount}} का इनवॉइस {{invoice_number}} {{due_date}} को ड्यू था और अभी भी पेंडिंग है। हमने आपको ईमेल पर एक सुरक्षित पेमेंट लिंक भेजा है — उसे पूरा करने के लिए अपना इनबॉक्स देखें। अगर आप ये मैसेज नहीं चाहते, तो जवाब में STOP लिख दें। {{sign_off}}`,
+      hinglish: `{{greeting}} {{context_sentence}} {{amount}} ka invoice {{invoice_number}} {{due_date}} ko due tha aur abhi bhi khula hai. Humne aapko email par ek surakshit payment link bheja hai — use poora karne ke liye apna inbox dekhein. Agar aap ye messages nahi chahte, to jawab mein STOP likh dein. {{sign_off}}`,
+    },
     slots: [
       ...commonFreeSlots,
       { name: 'amount', kind: 'immutable', description: 'exact amount due' },
@@ -149,15 +329,50 @@ Pay securely here (UPI, cards, netbanking): {{payment_link}}
       { name: 'payment_link', kind: 'immutable', description: 'provider short URL, server-injected' },
       { name: 'legal_footer', kind: 'immutable', description: 'legal text' },
     ],
-    supportedLanguages: ['en', 'hi', 'hinglish'],
   },
 };
 
-/** Deterministic default fills used when no agent output is involved (money path). */
-export const DEFAULT_FREE_FILLS: Record<string, string> = {
-  greeting: 'Hello,',
-  context_sentence: 'We were unable to collect your recent payment, and wanted to make it easy to complete.',
-  sign_off: 'Thank you,\nThe Billing Team',
+/**
+ * The two legal footers, server-injected. They live here rather than as string
+ * literals at the two call sites in execute.ts for the same reason the
+ * templates do: a footer that exists in English only is how a fully translated
+ * message ends in an English sentence.
+ */
+export const LEGAL_FOOTERS = {
+  payment_notice: {
+    en: 'This is a payment notice regarding your account. Reply STOP to opt out.',
+    hi: 'यह आपके अकाउंट से जुड़ा एक पेमेंट नोटिस है। मैसेज बंद करने के लिए जवाब में STOP लिखें।',
+    hinglish: 'Yeh aapke account se sambandhit ek payment notice hai. Messages band karne ke liye jawab mein STOP likhein.',
+  },
+  emandate: {
+    en: 'As per RBI e-mandate guidelines, you may cancel before the debit date.',
+    hi: 'आरबीआई ई-मैंडेट गाइडलाइंस के अनुसार, आप डेबिट डेट से पहले इसे कैंसिल कर सकते हैं।',
+    hinglish: 'RBI e-mandate guidelines ke anusaar, aap debit date se pehle ise cancel kar sakte hain.',
+  },
+} as const satisfies Record<string, LocalizedText>;
+
+/**
+ * Deterministic default fills used when no agent output is involved (money
+ * path), per language. English-only defaults were the second half of the
+ * mixed-language message: even with a translated skeleton, the money path fed
+ * these three English sentences into it.
+ */
+export const DEFAULT_FREE_FILLS: Record<Language, Record<string, string>> = {
+  en: {
+    greeting: 'Hello,',
+    context_sentence: 'We were unable to collect your recent payment, and wanted to make it easy to complete.',
+    sign_off: 'Thank you,\nThe Billing Team',
+  },
+  hi: {
+    greeting: 'नमस्ते,',
+    context_sentence: 'हम आपका रीसेंट पेमेंट कलेक्ट नहीं कर पाए, और इसे पूरा करना आसान बनाना चाहते थे।',
+    sign_off: 'धन्यवाद,\nबिलिंग टीम',
+  },
+  hinglish: {
+    greeting: 'Namaste,',
+    context_sentence: 'Hum aapka recent payment collect nahi kar paye, aur ise poora karna aasan banana chahte the.',
+    sign_off: 'Dhanyavaad,\nBilling Team',
+  },
 };
 
 export class TemplateRenderError extends Error {}
@@ -216,6 +431,7 @@ export function validateFreeFills(skeleton: TemplateSkeleton, freeFills: Record<
  */
 export function renderTemplate(
   skeleton: TemplateSkeleton,
+  language: Language,
   immutableValues: Record<string, string>,
   freeFills: Record<string, string>,
 ): { subject: string; body: string } {
@@ -232,11 +448,11 @@ export function renderTemplate(
   const fill = (text: string): string =>
     text.replace(/\{\{(\w+)\}\}/g, (_m, name: string) => {
       if (immutableSlotNames.has(name)) return immutableValues[name] ?? '';
-      if (freeSlotNames.has(name)) return freeFills[name] ?? DEFAULT_FREE_FILLS[name] ?? '';
+      if (freeSlotNames.has(name)) return freeFills[name] ?? DEFAULT_FREE_FILLS[language][name] ?? '';
       throw new TemplateRenderError(`undeclared slot '{{${name}}}' in template ${skeleton.templateId}`);
     });
 
-  return { subject: fill(skeleton.subject), body: fill(skeleton.body) };
+  return { subject: fill(localize(skeleton.subject, language)), body: fill(localize(skeleton.body, language)) };
 }
 
 /**
@@ -251,6 +467,7 @@ export function renderTemplate(
  */
 export function renderVoiceScript(
   skeleton: TemplateSkeleton,
+  language: Language,
   immutableValues: Record<string, string>,
   freeFills: Record<string, string>,
 ): string {
@@ -262,13 +479,13 @@ export function renderVoiceScript(
   const problems = validateFreeFills(skeleton, freeFills);
   if (problems.length > 0) throw new TemplateRenderError(problems.join('; '));
 
-  return skeleton.voiceScript.replace(/\{\{(\w+)\}\}/g, (_m, name: string) => {
+  return localize(skeleton.voiceScript, language).replace(/\{\{(\w+)\}\}/g, (_m, name: string) => {
     if (immutableSlotNames.has(name)) {
       const value = immutableValues[name];
       if (value === undefined) throw new TemplateRenderError(`missing immutable slot value '${name}'`);
       return value;
     }
-    if (freeSlotNames.has(name)) return freeFills[name] ?? DEFAULT_FREE_FILLS[name] ?? '';
+    if (freeSlotNames.has(name)) return freeFills[name] ?? DEFAULT_FREE_FILLS[language][name] ?? '';
     throw new TemplateRenderError(`undeclared slot '{{${name}}}' in voice script ${skeleton.templateId}`);
   });
 }

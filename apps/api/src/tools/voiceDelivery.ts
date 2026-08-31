@@ -67,16 +67,17 @@ export function buildVoiceImmutableValues(
   invoice: typeof invoices.$inferSelect,
   amountDuePaise: number,
   customerName: string,
+  language: Language,
   debitDate?: Date,
 ): Record<string, string> {
   const values: Record<string, string> = {
-    amount: formatINRForSpeech(amountDuePaise),
-    invoice_number: formatInvoiceRefForSpeech(invoice.providerInvoiceId ?? invoice.id.slice(0, 8)),
+    amount: formatINRForSpeech(amountDuePaise, language),
+    invoice_number: formatInvoiceRefForSpeech(invoice.providerInvoiceId ?? invoice.id.slice(0, 8), language),
   };
-  if (templateId === 'payment_reminder') values['due_date'] = formatDateIST(invoice.dueDate);
+  if (templateId === 'payment_reminder') values['due_date'] = formatDateIST(invoice.dueDate, language);
   if (templateId === 'pre_debit_notice') {
     values['customer_name'] = customerName;
-    if (debitDate) values['debit_date'] = formatDateIST(debitDate);
+    if (debitDate) values['debit_date'] = formatDateIST(debitDate, language);
   }
   return values;
 }
@@ -122,9 +123,10 @@ export async function deliverVoiceNote(
       args.invoice,
       args.amountDuePaise,
       args.customer.name,
+      args.language,
       args.debitDate,
     );
-    const script = renderVoiceScript(args.skeleton, immutables, args.freeFills);
+    const script = renderVoiceScript(args.skeleton, args.language, immutables, args.freeFills);
     const audio = await deps.synthesizer.speak({ script, language: args.language });
     const sent = await deps.whatsapp.sendVoice({ to: args.customer.phone!, audio });
 

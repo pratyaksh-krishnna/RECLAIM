@@ -14,11 +14,28 @@ export const TemplateSlot = z.object({
 });
 export type TemplateSlot = z.infer<typeof TemplateSlot>;
 
+/**
+ * One piece of template text in every language the system speaks.
+ *
+ * Every language is REQUIRED, so a template cannot ship half-translated. It
+ * used to be a single English string per field, with the customer's language
+ * reaching only the agent-filled free slots — which produced a message whose
+ * greeting and sign-off were Hindi and whose every other sentence was English.
+ * A partial record would let that back in one template at a time.
+ */
+export const LocalizedText = z.object(
+  // Built FROM the Language enum rather than beside it: adding a language is
+  // then a compile error in every template, which is the moment to translate
+  // it, instead of a silent gap discovered by a customer.
+  Object.fromEntries(Language.options.map((l) => [l, z.string()])) as Record<Language, z.ZodString>,
+);
+export type LocalizedText = z.infer<typeof LocalizedText>;
+
 export const TemplateSkeleton = z.object({
   templateId: z.string().min(1),
-  subject: z.string(),
+  subject: LocalizedText,
   /** body with {{slotName}} placeholders */
-  body: z.string(),
+  body: LocalizedText,
   /**
    * The spoken form of this template. Two rules, enforced by test: never
    * {{payment_link}} (a URL read aloud is useless) and never {{legal_footer}}
@@ -29,9 +46,8 @@ export const TemplateSkeleton = z.object({
    * leaves the sign-off mid-message, dangling on its comma before the opt-out
    * sentence. Spoken, a sign-off has to be last.
    */
-  voiceScript: z.string(),
+  voiceScript: LocalizedText,
   slots: z.array(TemplateSlot),
-  supportedLanguages: z.array(Language),
 });
 export type TemplateSkeleton = z.infer<typeof TemplateSkeleton>;
 
