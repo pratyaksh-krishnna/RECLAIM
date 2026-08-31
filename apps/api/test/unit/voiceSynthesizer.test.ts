@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MockSynthesizer, SarvamSynthesizer, sarvamLanguageCode } from '../../src/voice/index.js';
+import { DEFAULT_SPEAKER, MockSynthesizer, SarvamSynthesizer, sarvamLanguageCode } from '../../src/voice/index.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -46,11 +46,19 @@ describe('SarvamSynthesizer', () => {
       text: 'Hello',
       model: 'bulbul:v3',
       language_code: 'hi-IN',
-      speaker: 'mani',
+      // the constant, not a copy of its current value: tuning the default
+      // voice is a one-line change in voice.ts and should not fail a test that
+      // is about the request SHAPE
+      speaker: DEFAULT_SPEAKER,
       output_audio_codec: 'opus',
       // opus rejects the 22050 default outright; see the comment in voice.ts
       speech_sample_rate: 24000,
     });
+    // Pace is tuned by hand, so pin the range rather than the value: bulbul:v3
+    // accepts 0.5 to 2.0 and rejects the request outright outside it.
+    expect(typeof body['pace']).toBe('number');
+    expect(body['pace'] as number).toBeGreaterThanOrEqual(0.5);
+    expect(body['pace'] as number).toBeLessThanOrEqual(2.0);
     expect(audio.bytes.toString()).toBe('AB');
     expect(audio.mimeType).toBe('audio/ogg');
     expect(audio.requestId).toBe('req_1');

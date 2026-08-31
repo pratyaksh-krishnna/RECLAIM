@@ -33,7 +33,7 @@ const MAX_SCRIPT_CHARS = 2500;
  * Lowest critical-error-rate speaker in Sarvam's own published ranking (0.00%).
  * Names are case-sensitive and must be lowercase.
  */
-export const DEFAULT_SPEAKER = 'mani';
+export const DEFAULT_SPEAKER = 'ritu';
 
 /**
  * Sarvam has no Hinglish language code. Hinglish fills are Latin-script, so the
@@ -83,6 +83,7 @@ export class SarvamSynthesizer implements VoiceSynthesizer {
         // sample rates". 24000 is the highest opus takes that Sarvam documents
         // as a v3 default, and speech needs no more.
         speech_sample_rate: 24000,
+        pace:1.05,
         enable_preprocessing: true,
       }),
     });
