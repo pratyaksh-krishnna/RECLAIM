@@ -15,7 +15,9 @@ import { generatePopulation, mulberry32 } from './generator.js';
 
 const rng = mulberry32(20260821);
 // Every case is diagnosed by a real model call, so seed size drives API cost.
-// SEED_COUNT lets you run a cheap demo (e.g. SEED_COUNT=20) instead of 1,000.
+// SEED_COUNT lets you run a cheap demo (e.g. SEED_COUNT=20) instead of 1,000,
+// and it is an exact count: the generator trims its buckets to fit rather than
+// rounding past what was asked for.
 const SEED_COUNT = Number(process.env['SEED_COUNT'] ?? 1000);
 const population = generatePopulation(rng, SEED_COUNT);
 const now = new Date();
@@ -60,7 +62,14 @@ for (const p of population) {
       timezone: 'Asia/Kolkata',
       preferredLanguage: p.language,
       // A voice note skips a customer with no number or no consent, so without
-      // these the demo shows an email path and nothing beside it.
+      // a number the demo shows an email path and nothing beside it.
+      //
+      // Consent, though, is granted by the PLAN and defaults to false — only
+      // the two scripted_promise_voice customers set it. Every customer having
+      // it meant every case synthesised a voice note: a 20-case run was 20
+      // Sarvam calls to show one feature. Now a run produces exactly two, and
+      // the rest audit voice.skipped / no_consent, which is itself the thing
+      // an operator needs to be able to look up.
       //
       // The number is deliberately UNROUTABLE. An Indian mobile is ten digits
       // beginning 6-9, so "+9190…" would have been a dialable subscriber
@@ -72,7 +81,7 @@ for (const p of population) {
       // Sequential rather than random so `pnpm seed` stays reproducible and
       // the numbers stay unique — phone is a unique column.
       phone: `+9100${String(phoneSeq++).padStart(6, '0')}`,
-      whatsappConsent: true,
+      whatsappConsent: p.whatsappConsent ?? false,
     })
     .returning();
   if (!customer) continue;

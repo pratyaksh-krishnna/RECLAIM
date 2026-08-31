@@ -49,6 +49,13 @@ export interface SeedCustomerPlan {
   priorPaidInvoices?: number;
   /** scripted inbound reply after first outreach */
   scriptedReply?: string;
+  /**
+   * WhatsApp consent. Absent means false: a voice note is an accompaniment to
+   * a demo, not something every seeded customer should generate, and consent
+   * is the switch the delivery tool already checks. Only the
+   * scripted_promise_voice cases set it.
+   */
+  whatsappConsent?: boolean;
   /** failure timestamp override (month-end clustering) */
   failedAtDay?: number;
 }
@@ -63,7 +70,8 @@ export type Scenario =
   | 'habitual_late_payer'
   | 'afa_high_value'
   | 'scripted_dispute'
-  | 'scripted_optout';
+  | 'scripted_optout'
+  | 'scripted_promise_voice';
 
 export function generatePopulation(rng: () => number, total = 1000): SeedCustomerPlan[] {
   const plans: SeedCustomerPlan[] = [];
@@ -78,20 +86,46 @@ export function generatePopulation(rng: () => number, total = 1000): SeedCustome
     ['afa_high_value', Math.max(1, Math.round(total * 0.008))],
     ['scripted_dispute', 1],
     ['scripted_optout', 1],
+    ['scripted_promise_voice', 2],
   ];
-  const planned = counts.reduce((a, [, n]) => a + n, 0);
-  counts.push(['b2b_overdue', Math.max(0, total - planned)]); // fill remainder
+
+  /**
+   * `total` is a CEILING, not a floor. The proportional buckets round up and
+   * the scripted ones are flat, so at small totals they overshoot — at
+   * total=20 they came to 22 — and every extra case is three more real model
+   * calls than the operator asked to pay for. Undershoot fills with b2b_overdue;
+   * overshoot trims the widest bucket, one case at a time, so the mix narrows
+   * evenly instead of one scenario disappearing.
+   *
+   * Scripted scenarios are never trimmed: each is a specific behaviour the demo
+   * exists to show, so a total too small to hold them all overshoots loudly
+   * rather than silently dropping the dispute or the voice notes.
+   */
+  const scripted = new Set<Scenario>(['scripted_dispute', 'scripted_optout', 'scripted_promise_voice']);
+  let planned = counts.reduce((a, [, n]) => a + n, 0);
+  if (planned < total) counts.push(['b2b_overdue', total - planned]);
+  while (planned > total) {
+    let widest = -1;
+    for (let j = 0; j < counts.length; j++) {
+      const [scenario, n] = counts[j]!;
+      if (scripted.has(scenario) || n === 0) continue;
+      if (widest === -1 || n > counts[widest]![1]) widest = j;
+    }
+    if (widest === -1) break; // only scripted cases left; they are the floor
+    counts[widest]![1]--;
+    planned--;
+  }
 
   let i = 0;
   for (const [scenario, n] of counts) {
     for (let k = 0; k < n; k++, i++) {
-      plans.push(makeOne(rng, scenario, i));
+      plans.push(makeOne(rng, scenario, i, k));
     }
   }
   return plans;
 }
 
-function makeOne(rng: () => number, scenario: Scenario, i: number): SeedCustomerPlan {
+function makeOne(rng: () => number, scenario: Scenario, i: number, k = 0): SeedCustomerPlan {
   const isB2B = ['b2b_overdue', 'habitual_late_payer', 'afa_high_value'].includes(scenario);
   const person = `${pick(rng, FIRST)} ${pick(rng, LAST)}`;
   const company = pick(rng, B2B);
@@ -165,6 +199,41 @@ function makeOne(rng: () => number, scenario: Scenario, i: number): SeedCustomer
         ...base, name: 'Omkar Optout', email: 'omkar.optout@demo.reclaim.test',
         scenario, rail: 'card', declineCode: 'insufficient_funds', amountPaise: plan.mrrPaise, plan,
         scriptedReply: 'STOP. Unsubscribe me from all payment emails immediately.',
+      };
+    }
+    case 'scripted_promise_voice': {
+      /**
+       * The two voice-note cases, and the only two customers in the whole
+       * population who consent to WhatsApp — so a run synthesises exactly two
+       * voice notes and every other case audits voice.skipped / no_consent.
+       *
+       * Both reply with a promise to pay in five days, which the reply
+       * interpreter classifies as promise_with_date and turns into a
+       * record_promise_to_pay. Starter Monthly (₹499) is deliberate on both
+       * counts: under the ₹5,000 autonomous cap, so the outreach that CARRIES
+       * the voice note needs no approval, and under the ₹2,000 promise
+       * threshold, so the promise is accepted rather than parked in the
+       * approval queue. English for the same reason — the demo is meant to be
+       * listened to.
+       */
+      const plan = PLANS[0]!;
+      const who =
+        k === 0
+          ? {
+              name: 'Pallavi Promise',
+              email: 'pallavi.promise@demo.reclaim.test',
+              reply: 'Sorry for the delay — my salary is credited at the end of this week. I will pay this in 5 days.',
+            }
+          : {
+              name: 'Prakash Promise',
+              email: 'prakash.promise@demo.reclaim.test',
+              reply: 'Apologies, money is a little tight this month. I promise I will clear this in 5 days.',
+            };
+      return {
+        ...base, name: who.name, email: who.email, language: 'en',
+        scenario, rail: 'card', declineCode: 'insufficient_funds', amountPaise: plan.mrrPaise, plan,
+        whatsappConsent: true,
+        scriptedReply: who.reply,
       };
     }
   }
